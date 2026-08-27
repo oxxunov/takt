@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Такт</string>
+
+    <string name="pick_file">Выбрать трек или видео</string>
+    <string name="play">Играть</string>
+    <string name="calibrate">Калибровка задержки</string>
+    <string name="difficulty">Сложность</string>
+
+    <string name="hint_calibrate_first">Сначала пройди калибровку — без неё ноты не совпадут со звуком.</string>
+    <string name="analyzing">Анализирую «%1$s»…</string>
+    <string name="ready">Готово: %1$s</string>
+    <string name="loaded_from_cache">Из кэша: %1$s</string>
+    <string name="no_beats_found">В файле не нашлось ритмической структуры.</string>
+    <string name="error_fmt">Ошибка: %1$s</string>
+
+    <string name="sensitivity_fmt">Плотность нот: %1$d%%</string>
+    <string name="grid_on">по сетке</string>
+    <string name="grid_off">свободный тайминг</string>
+    <string name="info_fmt">%1$.1f BPM · %2$d:%3$02d · %4$d нот (%5$.1f/сек) · %6$s</string>
+
+    <string name="calib_title">Калибровка</string>
+    <string name="calib_instruction">Включи звук и стучи по экрану в такт щелчкам.</string>
+    <string name="calib_warmup_fmt">Разогрев: %1$d из %2$d</string>
+    <string name="calib_taps_fmt">Учтено ударов: %1$d</string>
+    <string name="calib_result_fmt">Поправка: %1$d мс (разброс %2$d мс)</string>
+    <string name="current_offset_fmt">Текущая поправка: %1$d мс</string>
+    <string name="audio_engine_failed">Не удалось открыть аудиопоток.</string>
+    <string name="reset">Сбросить</string>
+    <string name="done">Готово</string>
+    <string name="close">Закрыть</string>
+
+    <string name="results_title">%1$s</string>
+    <string name="results_body_fmt">Оценка: %1$s\n\nСчёт: %2$d\nТочность: %3$.1f%%\nМакс. комбо: %4$d\n\nPerfect: %5$d\nGood: %6$d\nMiss: %7$d</string>
+    <string name="pick_to_start">Выбери трек — и поехали.</string>
+    <string name="error_no_track">Трек не передан.</string>
+    <string name="error_cache_lost">Анализ трека потерян, выбери файл заново.</string>
+    <string name="error_playback">Не удалось начать воспроизведение.</string>
+    <string name="crash_title">Приложение падало</string>
+    <string name="crash_copy">Копировать</string>
+    <string name="crash_dismiss">Закрыть</string>
+    <string name="error_setup_title">Не удалось запустить уровень</string>
+    <string name="error_playback_title">Ошибка воспроизведения</string>
+    <string name="paused_title">Уровень прерван</string>
+    <string name="paused_body">Партию нельзя продолжить с середины — запусти трек заново.</string>
+    <string name="decoding">Готовлю трек…</string>
+    <string name="new_record">Новый рекорд!</string>
+    <string name="recent_tracks">Недавние</string>
+    <string name="record_fmt">Рекорд: %1$s · %2$d · %3$.1f%%</string>
+    <string name="no_record">Ещё не играно</string>
+    <string name="track_meta_fmt">%1$.0f BPM · %2$d:%3$02d</string>
+    <string name="remove_track_q">Убрать трек из списка? Файл не удаляется.</string>
+    <string name="remove">Убрать</string>
+    <string name="crash_native_prefix">Падение без стектрейса — вероятно, нативный слой. Последние пройденные шаги:</string>
+    <string name="diag_title">Диагностика</string>
+    <string name="diag_button">Диагностика</string>
+    <string name="diag_empty">Отчётов о сбоях нет.</string>
+    <string name="diag_share">Отправить</string>
+    <string name="diag_clear">Очистить отчёт</string>
+    <string name="diag_copied">Скопировано</string>
+    <string name="crash_found">Обнаружен сбой в прошлый раз. Открыть отчёт?</string>
+    <string name="open">Открыть</string>
+    <string name="holds_fmt">Удержаний: %1$d, сорвано: %2$d</string>
+    <string name="holds_enabled">Удержания (длинные ноты)</string>
+    <string name="track_offset_fmt">Смещение этого трека: %1$d мс</string>
+    <string name="hop_mode">Режим с шариком (прыгает сам, води влево-вправо)</string>
+    <string name="fell_title">Упал!</string>
+    <string name="export_analysis">Выгрузить разбор трека</string>
+    <string name="export_no_track">Сначала выбери трек.</string>
+    <string name="export_no_analysis">Разбор не найден — открой трек заново.</string>
+</resources>

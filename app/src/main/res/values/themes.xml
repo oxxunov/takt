@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Takt" parent="Theme.AppCompat.DayNight.DarkActionBar">
+        <item name="android:colorBackground">@color/bg</item>
+        <item name="android:textColor">@color/text</item>
+        <item name="colorPrimary">@color/accent</item>
+        <item name="colorAccent">@color/accent</item>
+    </style>
+
+    <!--
+      Полноэкранная тема наследуется от NoActionBar, а не от Theme.Takt.
+      AppCompat читает СВОЙ атрибут windowNoTitle, без префикса android:.
+      Раньше здесь стоял android:windowNoTitle вместе с windowActionBar=false,
+      AppCompat видел запрещённое сочетание и ронял setContentView —
+      игровой экран не открывался вообще ни разу.
+    -->
+    <style name="Theme.Takt.Fullscreen" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:colorBackground">@color/bg</item>
+        <item name="android:textColor">@color/text</item>
+        <item name="colorPrimary">@color/accent</item>
+        <item name="colorAccent">@color/accent</item>
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+    </style>
+</resources>
