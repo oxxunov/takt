@@ -1,9 +1,13 @@
-*.iml
 .gradle/
-/local.properties
-/.idea/
-.DS_Store
 build/
-/captures
-.externalNativeBuild
-.cxx/
+local.properties
+.idea/
+*.iml
+.DS_Store
+# собирается в CI из исходников DeepFilterNet / libsamplerate
+ml-engine/src/main/jniLibs/
+ml-engine/src/main/cpp/libsamplerate/
+ml-engine/src/main/cpp/generated/
+ml-engine/src/main/assets/
+DeepFilterNet/
+audio-io/src/main/cpp/lame/

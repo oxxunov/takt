@@ -1,51 +1,178 @@
-name: build
+name: Build APK
 
 on:
   push:
-    branches: [ main, master ]
-  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
+env:
+  DFN_TAG: v0.5.6          # официальный DeepFilterNet (MIT/Apache-2.0)
+  SRC_TAG: 0.2.2           # libsamplerate (BSD-2)
+
 jobs:
-  # Тесты ядра идут отдельной быстрой работой: :core не тянет Android SDK,
-  # поэтому логика проверяется за секунды и падает раньше долгой сборки APK.
-  test:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.10.2'
-      - name: Unit-тесты ядра
-        run: gradle :core:test --no-daemon --stacktrace
-      - name: Отчёт по тестам
+          gradle-version: '8.9'
+
+      - name: Unit tests (audio-engine)
+        run: gradle :audio-engine:test --no-daemon --stacktrace
+
+      # ---------- DeepFilterNet3: собираем официальный C API под Android ----------
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.79.0'
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - name: Fetch DeepFilterNet
+        run: |
+          git clone --depth 1 --branch "$DFN_TAG" https://github.com/Rikorose/DeepFilterNet.git DeepFilterNet
+          ls -la DeepFilterNet/Cargo.lock || echo "Cargo.lock нет"
+          ls -la DeepFilterNet/models/DeepFilterNet3_onnx.tar.gz
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: DeepFilterNet -> target
+          key: dfn-${{ env.DFN_TAG }}
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --version 3.5.4 --locked
+
+      - name: Build libdf.so
+        working-directory: DeepFilterNet
+        env:
+          RUSTFLAGS: -C link-arg=-Wl,-soname,libdf.so
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          cargo ndk -t arm64-v8a -t x86_64 -P 26 rustc --release -p deep_filter --features capi,tract --crate-type cdylib
+          for pair in arm64-v8a:aarch64-linux-android x86_64:x86_64-linux-android; do
+            abi=${pair%%:*}; triple=${pair##*:}
+            mkdir -p ../ml-engine/src/main/jniLibs/$abi
+            cp target/$triple/release/libdf.so ../ml-engine/src/main/jniLibs/$abi/
+          done
+          ls -la ../ml-engine/src/main/jniLibs/*/
+
+      - name: Model and C API signature
+        run: |
+          mkdir -p ml-engine/src/main/assets ml-engine/src/main/cpp/generated
+          cp DeepFilterNet/models/DeepFilterNet3_onnx.tar.gz ml-engine/src/main/assets/
+          CAPI=DeepFilterNet/libDF/src/capi.rs
+          grep -q "fn df_process_frame" $CAPI
+          grep -q "fn df_get_frame_length" $CAPI
+          grep -A6 "fn df_create" $CAPI
+          if grep -A6 "fn df_create" $CAPI | grep -q "log_level"; then
+            echo "#define DF_CREATE_HAS_LOG 1" > ml-engine/src/main/cpp/generated/df_config.h
+          else
+            echo "/* df_create(path, atten_lim) */" > ml-engine/src/main/cpp/generated/df_config.h
+          fi
+          cat ml-engine/src/main/cpp/generated/df_config.h
+
+      - name: Fetch libsamplerate
+        run: git clone --depth 1 --branch "$SRC_TAG" https://github.com/libsndfile/libsamplerate.git ml-engine/src/main/cpp/libsamplerate
+
+      - name: Fetch LAME 3.100 (MP3)
+        run: |
+          curl -fL --retry 5 -o lame.tar.gz https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz
+          echo "ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e  lame.tar.gz" | sha256sum -c -
+          tar xzf lame.tar.gz
+          mv lame-3.100 audio-io/src/main/cpp/lame
+
+      - name: Fetch BandIt v2 (ONNX)
+        run: |
+          set -e
+          D=ml-engine/src/main/assets/bandit
+          mkdir -p $D
+          BASE=https://github.com/aliali2722/kirinuki-releases/releases/download/deps-sep-banditv2-multi-r1
+          for f in bandit_v2_multi_48k.onnx ATTRIBUTION.md LICENSE-bandit-v2-code.txt cc-by-sa-4.0-legalcode.txt export-manifest.json; do
+            curl -fL --retry 5 -o "$D/$f" "$BASE/$f"
+          done
+          cd $D
+          cat > sums.txt <<'EOS'
+          1b5f92e16c1e1c62a0a73363d85cff4bb6b215bea16e81ad91ee9c145152d947  bandit_v2_multi_48k.onnx
+          7246d876e6b23157555a4dcac95e19c87b3dcbd893c89876e70b28ae5f3c399a  ATTRIBUTION.md
+          c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  LICENSE-bandit-v2-code.txt
+          28a9529c7d0bb4dc51f4bf5c116a3d16ef247a052f7591466768ddf563fd1cf5  cc-by-sa-4.0-legalcode.txt
+          91140d61fa450881c09e597e0b00b39d687228d284371629dc32ff521d7192de  export-manifest.json
+          EOS
+          sed -i 's/^ *//' sums.txt
+          sha256sum -c sums.txt
+          rm sums.txt
+          ls -la
+
+      - name: Inspect BandIt model (diagnostics)
+        continue-on-error: true
+        run: |
+          pip install --quiet onnxruntime numpy
+          cat ml-engine/src/main/assets/bandit/export-manifest.json | head -c 4000; echo
+          python3 - <<'EOP'
+          import onnxruntime as ort, numpy as np, time
+          s = ort.InferenceSession("ml-engine/src/main/assets/bandit/bandit_v2_multi_48k.onnx")
+          for i in s.get_inputs(): print("IN ", i.name, i.shape, i.type)
+          for o in s.get_outputs(): print("OUT", o.name, o.shape, o.type)
+          inp = s.get_inputs()[0]
+          shape = [d if isinstance(d, int) and d > 0 else None for d in inp.shape]
+          ch = shape[-2] or 2
+          T = shape[-1] or 6 * 48000
+          x = (np.random.randn(1, ch, T) * 0.1).astype(np.float32)
+          if len(inp.shape) == 2: x = x[0]
+          t0 = time.time(); outs = s.run(None, {inp.name: x}); dt = time.time() - t0
+          for o, v in zip(s.get_outputs(), outs): print("RES", o.name, v.shape, "rms", float(np.sqrt((v ** 2).mean())))
+          print("time per chunk (CI CPU): %.2f s for %.2f s audio" % (dt, T / 48000))
+          EOP
+
+      # ---------- APK ----------
+      - name: Build debug APK
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: core-test-report
-          path: core/build/reports/tests/test
+          name: voice-enhance-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: audio-engine/build/reports/tests/
           if-no-files-found: ignore
 
-  apk:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      # ---------- инструментальные тесты на эмуляторе ----------
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Instrumented tests (emulator, API 34)
+        uses: reactivecircus/android-emulator-runner@v2
         with:
-          distribution: temurin
-          java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          ram-size: 4096M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: gradle :video-engine:connectedDebugAndroidTest :app:connectedDebugAndroidTest --no-daemon --stacktrace
+
+      - name: Upload instrumented test reports
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          gradle-version: '8.10.2'
-      - name: Сборка debug APK
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
-      - uses: actions/upload-artifact@v4
-        with:
-          name: takt-debug-v22
-          path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
+          name: instrumented-test-report
+          path: |
+            video-engine/build/reports/androidTests/
+            app/build/reports/androidTests/
+          if-no-files-found: ignore
