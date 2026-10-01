@@ -96,6 +96,20 @@ object VideoProbe {
                 }
             } catch (_: Exception) {
             }
+            if (duration <= 0) {
+                // во фрагментированных MP4 длительности в заголовке нет — берём по самим кадрам
+                ex.selectTrack(videoTrack)
+                var n = 0
+                var last = 0L
+                while (true) {
+                    val t = ex.sampleTime
+                    if (t < 0) break
+                    n++
+                    if (t > last) last = t
+                    if (!ex.advance()) break
+                }
+                duration = if (n > 1) last + last / (n - 1) else last
+            }
             if (rotation == 0) {
                 // в части файлов поворот есть только в метаданных контейнера
                 try {
