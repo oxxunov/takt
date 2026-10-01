@@ -101,8 +101,12 @@ class BanditModel(private val context: Context) {
     }
 
     /**
-     * Делит [input] (48 кГц) на стемы модели (речь, музыка, эффекты). Каждый стем — файл той же длины.
-     * [highQuality]: перекрытие фрагментов 50 % и, для стерео, усреднение с прогоном при переставленных каналах.
+     * Делит [input] (48 кГц) на стемы модели (speech, music, sfx→effects). Каждый стем — файл той же длины.
+     *
+     * Модель принимает не звук, а спектр (как в рецепте экспорта): STFT моно-канала, n_fft 2048, окно Hann,
+     * шаг 512, center + reflect, normalized; вход [B, 2(re/im), 1025, 751] — ровно 8 с; каналы идут батчем.
+     * Выход — комплексные маски [B, 3, 2, 1025, 751]; стем = маска × спектр, затем обратное STFT.
+     * [highQuality]: фрагменты перекрываются на 50 % вместо 25 % (каждая точка считается дважды).
      */
     fun extractStems(
         input: PcmFile,
@@ -127,89 +131,33 @@ class BanditModel(private val context: Context) {
         try {
             val inName = session.inputNames.first()
             val inShape = (session.inputInfo[inName]!!.info as TensorInfo).shape
-            if (inShape.size !in 2..3) throw IOException("Неожиданный формат входа модели: ${inShape.contentToString()}")
-            val modelCh = inShape[inShape.size - 2].toInt().let { if (it > 0) it else 2 }
-            val chunk = inShape.last().toInt().let { if (it > 0) it else DEFAULT_CHUNK }
-            val outNames = session.outputNames.toList()
-            val manifestNames = stemNamesFromManifest()
+            if (inShape.size != 4 || inShape[1] != 2L || inShape[2] != BINS.toLong()) {
+                throw IOException("Неожиданный формат входа модели: ${inShape.contentToString()}")
+            }
+            val frames = inShape[3].toInt().let { if (it > 0) it else 751 }
+            val chunk = (frames - 1) * HOP // 751 кадр ⇔ 384000 сэмплов = 8 с
+            val names = (stemNamesFromManifest() ?: listOf("speech", "music", "sfx")).mapIndexed { i, n -> canonical(n, i) }
+            val nStems = names.size
 
             val ch = input.channels
             val total = input.frames
             val overlap = if (highQuality) chunk / 2 else chunk / 4
-            val swapTta = highQuality && modelCh == 2 && ch == 2
             val hop = chunk - overlap
             val fadeIn = FloatArray(overlap) { i -> sin(PI / 2 * (i + 0.5) / overlap).let { (it * it).toFloat() } }
             val fadeOut = FloatArray(overlap) { i -> cos(PI / 2 * (i + 0.5) / overlap).let { (it * it).toFloat() } }
             val readBuf = Array(ch) { FloatArray(chunk) }
+            val rows = Array(nStems) { Array(ch) { FloatArray(chunk) } }
+            val pending = Array(nStems) { Array(ch) { FloatArray(overlap) } }
             val nChunks = if (total <= chunk) 1L else 1L + (total - chunk + hop - 1) / hop
-            val shape = if (inShape.size == 3) longArrayOf(1, modelCh.toLong(), chunk.toLong()) else longArrayOf(modelCh.toLong(), chunk.toLong())
-            val inArr = FloatArray(modelCh * chunk)
-
-            var names: List<String> = emptyList()
-            var rows: Array<Array<FloatArray>> = emptyArray()
-            var pending: Array<Array<FloatArray>> = emptyArray()
-
-            fun infer(swap: Boolean, acc: Boolean) {
-                for (mc in 0 until modelCh) {
-                    if (ch > modelCh && modelCh == 1) {
-                        for (i in 0 until chunk) { var sum = 0f; for (c in 0 until ch) sum += readBuf[c][i]; inArr[i] = sum / ch }
-                    } else {
-                        val srcCh = if (swap) (ch - 1 - min(mc, ch - 1)) else min(mc, ch - 1)
-                        System.arraycopy(readBuf[srcCh], 0, inArr, mc * chunk, chunk)
-                    }
-                }
-                OnnxTensor.createTensor(env, FloatBuffer.wrap(inArr), shape).use { tensor ->
-                    session.run(mapOf(inName to tensor)).use { res ->
-                        // (имя, буфер, смещение, каналы, длина) для каждого стема
-                        class View(val name: String, val fb: FloatBuffer, val base: Long, val oC: Int, val oT: Int)
-                        val views = ArrayList<View>()
-                        if (outNames.size >= 2) {
-                            for ((i, n) in outNames.withIndex()) {
-                                val t = res.get(n).get() as OnnxTensor
-                                val os = (t.info as TensorInfo).shape
-                                views += View(canonical(n, i), t.floatBuffer, 0L, os[os.size - 2].toInt(), os.last().toInt())
-                            }
-                        } else {
-                            val t = res.get(0) as OnnxTensor
-                            val os = (t.info as TensorInfo).shape
-                            val oC = os[os.size - 2].toInt()
-                            val oT = os.last().toInt()
-                            val nStems = when (os.size) {
-                                4 -> os[1].toInt()
-                                3 -> if (os[0] == 1L) 1 else os[0].toInt()
-                                else -> 1
-                            }
-                            val fb = t.floatBuffer
-                            for (k in 0 until nStems) {
-                                val raw = manifestNames?.getOrNull(k) ?: ""
-                                views += View(canonical(raw, k), fb, k.toLong() * oC * oT, oC, oT)
-                            }
-                        }
-                        if (rows.isEmpty()) {
-                            names = views.map { it.name }
-                            rows = Array(views.size) { Array(ch) { FloatArray(chunk) } }
-                            pending = Array(views.size) { Array(ch) { FloatArray(overlap) } }
-                            for (nm in names) {
-                                val f = File(workDir, "stem_${nm}.f32")
-                                files += f
-                                writers += PcmWriter(f, SAMPLE_RATE, ch)
-                            }
-                        }
-                        for ((k, v) in views.withIndex()) {
-                            val n = min(chunk, v.oT)
-                            for (c in 0 until ch) {
-                                val outCh = if (swap) ch - 1 - c else c
-                                val mc = min(c, v.oC - 1)
-                                val row = rows[k][outCh]
-                                if (!acc) java.util.Arrays.fill(row, 0f)
-                                for (i in 0 until n) {
-                                    val x = v.fb.get((v.base + mc.toLong() * v.oT + i).toInt())
-                                    row[i] = if (acc) (row[i] + x) * 0.5f else x
-                                }
-                            }
-                        }
-                    }
-                }
+            val stft = Stft(chunk, frames)
+            val specRe = Array(ch) { FloatArray(BINS * frames) }
+            val specIm = Array(ch) { FloatArray(BINS * frames) }
+            val inArr = FloatArray(ch * 2 * BINS * frames)
+            val shape = longArrayOf(ch.toLong(), 2, BINS.toLong(), frames.toLong())
+            for (nm in names) {
+                val f = File(workDir, "stem_${nm}.f32")
+                files += f
+                writers += PcmWriter(f, SAMPLE_RATE, ch)
             }
 
             PcmReader(input).use { reader ->
@@ -220,12 +168,39 @@ class BanditModel(private val context: Context) {
                     reader.seek(start)
                     val got = reader.read(readBuf, chunk)
                     for (c in 0 until ch) java.util.Arrays.fill(readBuf[c], got.coerceAtLeast(0), chunk, 0f)
-                    infer(swap = false, acc = false)
-                    if (swapTta) infer(swap = true, acc = true)
+
+                    // спектр каждого канала → батч модели
+                    for (c in 0 until ch) {
+                        stft.forward(readBuf[c], specRe[c], specIm[c])
+                        val b = c * 2 * BINS * frames
+                        System.arraycopy(specRe[c], 0, inArr, b, BINS * frames)
+                        System.arraycopy(specIm[c], 0, inArr, b + BINS * frames, BINS * frames)
+                    }
+                    OnnxTensor.createTensor(env, FloatBuffer.wrap(inArr), shape).use { tensor ->
+                        session.run(mapOf(inName to tensor)).use { res ->
+                            val t = res.get(0) as OnnxTensor
+                            val m = t.floatBuffer
+                            val plane = BINS * frames
+                            val yr = FloatArray(plane)
+                            val yi = FloatArray(plane)
+                            for (s in 0 until nStems) for (c in 0 until ch) {
+                                val base = ((c * nStems + s) * 2) * plane
+                                val xr = specRe[c]
+                                val xi = specIm[c]
+                                for (i in 0 until plane) {
+                                    val mr = m.get(base + i)
+                                    val mi = m.get(base + plane + i)
+                                    yr[i] = mr * xr[i] - mi * xi[i]
+                                    yi[i] = mr * xi[i] + mi * xr[i]
+                                }
+                                stft.inverse(yr, yi, rows[s][c])
+                            }
+                        }
+                    }
 
                     val last = start + chunk >= total
                     val emit = (if (last) total - start else hop.toLong()).coerceIn(0, chunk.toLong()).toInt()
-                    for (s in rows.indices) {
+                    for (s in 0 until nStems) {
                         for (c in 0 until ch) {
                             val row = rows[s][c]
                             if (k > 0) for (i in 0 until overlap) row[i] = pending[s][c][i] + row[i] * fadeIn[i]
@@ -249,6 +224,69 @@ class BanditModel(private val context: Context) {
         } finally {
             session.close()
             opts.close()
+        }
+    }
+}
+
+private const val N_FFT = 2048
+private const val HOP = 512
+private const val BINS = N_FFT / 2 + 1
+
+/**
+ * STFT как torchaudio.Spectrogram(n_fft=2048, hop=512, периодический Hann, center=True, reflect, normalized=True)
+ * и точное обратное преобразование (overlap-add с делением на сумму квадратов окна).
+ */
+internal class Stft(private val length: Int, private val frames: Int) {
+    private val fft = org.jtransforms.fft.FloatFFT_1D(N_FFT.toLong())
+    private val win = FloatArray(N_FFT) { (0.5 - 0.5 * cos(2.0 * PI * it / N_FFT)).toFloat() }
+    private val norm = kotlin.math.sqrt(win.sumOf { (it * it).toDouble() }).toFloat()
+    private val pad = N_FFT / 2
+    private val padded = FloatArray(length + 2 * pad)
+    private val buf = FloatArray(N_FFT)
+    private val acc = FloatArray(length + 2 * pad)
+    private val env = FloatArray(length + 2 * pad).also { e ->
+        for (t in 0 until frames) for (n in 0 until N_FFT) {
+            val p = t * HOP + n
+            if (p < e.size) e[p] += win[n] * win[n]
+        }
+    }
+
+    /** Спектр в раскладке [bin][frame] (как вход модели). */
+    fun forward(x: FloatArray, re: FloatArray, im: FloatArray) {
+        System.arraycopy(x, 0, padded, pad, length)
+        for (k in 1..pad) {
+            padded[pad - k] = x[k]                       // отражение в начале
+            padded[pad + length - 1 + k] = x[length - 1 - k] // и в конце
+        }
+        for (t in 0 until frames) {
+            val s = t * HOP
+            for (n in 0 until N_FFT) buf[n] = padded[s + n] * win[n]
+            fft.realForward(buf)
+            re[t] = buf[0] / norm; im[t] = 0f
+            re[(BINS - 1) * frames + t] = buf[1] / norm; im[(BINS - 1) * frames + t] = 0f
+            for (f in 1 until BINS - 1) {
+                re[f * frames + t] = buf[2 * f] / norm
+                im[f * frames + t] = buf[2 * f + 1] / norm
+            }
+        }
+    }
+
+    fun inverse(re: FloatArray, im: FloatArray, out: FloatArray) {
+        java.util.Arrays.fill(acc, 0f)
+        for (t in 0 until frames) {
+            buf[0] = re[t]
+            buf[1] = re[(BINS - 1) * frames + t]
+            for (f in 1 until BINS - 1) {
+                buf[2 * f] = re[f * frames + t]
+                buf[2 * f + 1] = im[f * frames + t]
+            }
+            fft.realInverse(buf, true)
+            val s = t * HOP
+            for (n in 0 until N_FFT) acc[s + n] += buf[n] * win[n] * norm
+        }
+        for (j in 0 until length) {
+            val e = env[j + pad]
+            out[j] = if (e > 1e-8f) acc[j + pad] / e else 0f
         }
     }
 }

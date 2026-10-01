@@ -24,7 +24,7 @@
     <string name="dlg_mode_high">Высокое качество</string>
     <string name="dlg_mode_fast_note">DeepFilterNet3: быстро, но пение в песнях тоже считает голосом и может убрать.</string>
     <string name="dlg_mode_standard_note">BandIt v2: модель для кино — отделяет диалоги от музыки и эффектов, песни сохраняются. В несколько раз дольше быстрой.</string>
-    <string name="dlg_mode_high_note">BandIt v2 с двойным перекрытием фрагментов и усреднением по каналам: чище, но примерно втрое дольше стандартной.</string>
+    <string name="dlg_mode_high_note">BandIt v2 с двойным перекрытием фрагментов: стыки чище, но примерно в полтора раза дольше стандартной.</string>
     <string name="dlg_strength_title">Сила удаления речи</string>
     <string name="dlg_strength_low">Низкая</string>
     <string name="dlg_strength_medium">Средняя</string>

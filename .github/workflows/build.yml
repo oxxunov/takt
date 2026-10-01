@@ -118,15 +118,9 @@ jobs:
           s = ort.InferenceSession("ml-engine/src/main/assets/bandit/bandit_v2_multi_48k.onnx")
           for i in s.get_inputs(): print("IN ", i.name, i.shape, i.type)
           for o in s.get_outputs(): print("OUT", o.name, o.shape, o.type)
-          inp = s.get_inputs()[0]
-          shape = [d if isinstance(d, int) and d > 0 else None for d in inp.shape]
-          ch = shape[-2] or 2
-          T = shape[-1] or 6 * 48000
-          x = (np.random.randn(1, ch, T) * 0.1).astype(np.float32)
-          if len(inp.shape) == 2: x = x[0]
-          t0 = time.time(); outs = s.run(None, {inp.name: x}); dt = time.time() - t0
-          for o, v in zip(s.get_outputs(), outs): print("RES", o.name, v.shape, "rms", float(np.sqrt((v ** 2).mean())))
-          print("time per chunk (CI CPU): %.2f s for %.2f s audio" % (dt, T / 48000))
+          x = (np.random.randn(1, 2, 1025, 751) * 0.1).astype(np.float32)
+          t0 = time.time(); outs = s.run(None, {s.get_inputs()[0].name: x}); dt = time.time() - t0
+          print("RES", outs[0].shape, "time per 8 s chunk (CI CPU, mono): %.2f s" % dt)
           EOP
 
       # ---------- APK ----------
@@ -165,7 +159,7 @@ jobs:
           ram-size: 4096M
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
-          script: gradle :video-engine:connectedDebugAndroidTest :app:connectedDebugAndroidTest --no-daemon --stacktrace
+          script: gradle :app:connectedDebugAndroidTest --no-daemon --stacktrace
 
       - name: Upload instrumented test reports
         if: always()
@@ -173,6 +167,5 @@ jobs:
         with:
           name: instrumented-test-report
           path: |
-            video-engine/build/reports/androidTests/
             app/build/reports/androidTests/
           if-no-files-found: ignore

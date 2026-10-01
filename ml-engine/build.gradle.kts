@@ -37,4 +37,5 @@ dependencies {
     api(project(":audio-engine"))
     // ONNX Runtime (MIT) — готовый движок для BandIt v2
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.19.2")
+    implementation("com.github.wendykierp:JTransforms:3.1")
 }
