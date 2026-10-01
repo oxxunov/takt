@@ -17,20 +17,25 @@ import java.io.IOException
 class DeepFilterDenoiser(private val context: Context) {
 
     companion object {
-        const val MODEL_ASSET = "DeepFilterNet3_onnx.tar.gz"
+        /**
+         * В APK модель лежит как .tgz: файлы *.gz сборщик Android распаковывает и переименовывает
+         * (без .gz), из-за чего ассет «пропадал». На диск копируется под исходным именем.
+         */
+        const val MODEL_ASSET = "DeepFilterNet3_onnx.tgz"
+        private const val MODEL_FILE = "DeepFilterNet3_onnx.tar.gz"
         private const val BLOCK = 8192
     }
 
     /** Модель лежит в assets; C API читает её с диска, поэтому копируем один раз в filesDir. */
     fun modelPath(): String {
-        val dst = File(context.filesDir, MODEL_ASSET)
+        val dst = File(context.filesDir, MODEL_FILE)
         val assetSize = try {
             context.assets.openFd(MODEL_ASSET).use { it.length }
         } catch (_: Exception) {
             -1L
         }
         if (!dst.exists() || (assetSize > 0 && dst.length() != assetSize)) {
-            val tmp = File(context.filesDir, "$MODEL_ASSET.tmp")
+            val tmp = File(context.filesDir, "$MODEL_FILE.tmp")
             context.assets.open(MODEL_ASSET).use { input -> tmp.outputStream().use { input.copyTo(it) } }
             if (!tmp.renameTo(dst)) throw IOException("Не удалось сохранить модель")
         }

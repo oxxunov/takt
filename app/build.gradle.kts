@@ -22,7 +22,7 @@ android {
 
     androidResources {
         // модели копируются из APK на диск — без сжатия это быстрее
-        noCompress += listOf("onnx", "gz")
+        noCompress += listOf("onnx", "tgz")
     }
 
     buildTypes {

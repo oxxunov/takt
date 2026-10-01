@@ -64,7 +64,7 @@ jobs:
       - name: Model and C API signature
         run: |
           mkdir -p ml-engine/src/main/assets ml-engine/src/main/cpp/generated
-          cp DeepFilterNet/models/DeepFilterNet3_onnx.tar.gz ml-engine/src/main/assets/
+          cp DeepFilterNet/models/DeepFilterNet3_onnx.tar.gz ml-engine/src/main/assets/DeepFilterNet3_onnx.tgz
           CAPI=DeepFilterNet/libDF/src/capi.rs
           grep -q "fn df_process_frame" $CAPI
           grep -q "fn df_get_frame_length" $CAPI
