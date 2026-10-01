@@ -94,18 +94,14 @@ class DialogueRemover(private val context: Context) {
         checkSpace(workDir, needBytes)
 
         val report = Report()
-        val srcStats = VideoProbe.trackStats(context, source, info.videoTrack)
         report.add("Источник: ${info.videoMime} ${info.width}×${info.height}, длительность по заголовку ${t(info.durationUs)}, чтение: ${info.engine}")
-        report.add("Видео в источнике: ${srcStats.first} кадров, последний на ${t(srcStats.second)}")
         report.add("Звук: ${track.mime}, ${track.sampleRate} Гц, ${track.channels} кан., дорожка ${track.index}")
-        // Последний кадр может стоять раньше конца файла законно: в видео с переменной частотой кадров
-        // (часто в аниме-MKV) неподвижная картинка хранится одним длинным кадром. Поэтому не ошибка, а заметка.
-        if (info.durationUs > 0 && info.durationUs - srcStats.second > 2_000_000L) {
-            report.add("Заметка: последний кадр на ${t(srcStats.second)}, файл длится ${t(info.durationUs)} — последний кадр держится до конца")
-        }
 
         val importer = AudioImporter(context)
-        val decoded = importer.decodeTrack(source, audioTrack, File(workDir, "audio.f32"), { onProgress(Stage.ANALYZE, it) }, isCancelled)
+        val decoded = importer.decodeTrack(
+            source, audioTrack, File(workDir, "audio.f32"), { onProgress(Stage.ANALYZE, it) }, isCancelled,
+            knownDurationUs = info.durationUs,
+        )
         report.add("Звук декодирован: ${t(decoded.pcm)}, ${decoded.pcm.sampleRate} Гц, ${decoded.pcm.channels} кан., старт ${t(decoded.firstPtsUs)}")
 
         // ---------- разделение ----------
@@ -149,7 +145,7 @@ class DialogueRemover(private val context: Context) {
 
         val out = assemble(
             source, info.videoTrack, info.rotation, info.durationUs, decoded.firstPtsUs, plan.container, plan.audioMime,
-            kbps, base, workDir, outFileNoExt, onProgress, isCancelled, report, srcStats,
+            kbps, base, workDir, outFileNoExt, onProgress, isCancelled, report,
         )
         if (projectDir == null) base.file.delete()
         if (projectDir != null) File(projectDir, "report.txt").writeText(out.report)
@@ -180,12 +176,10 @@ class DialogueRemover(private val context: Context) {
         onProgress(Stage.REMOVE, 0f)
         val mixed = RegionMixer.render(orig, base, stems, mix, File(workDir, "mixed.f32"), { onProgress(Stage.REMOVE, it * 0.3f) }, isCancelled)
         val report = Report()
-        val srcStats = VideoProbe.trackStats(context, source, meta.videoTrack)
         report.add("Ручная правка: участков ${mix.size}, звук после правки ${t(mixed)}")
-        report.add("Видео в источнике: ${srcStats.first} кадров, последний на ${t(srcStats.second)}")
         val res = assemble(
             source, meta.videoTrack, meta.rotation, meta.durationUs, meta.firstPtsUs, meta.container, meta.audioMime,
-            meta.kbps, mixed, workDir, outFileNoExt, onProgress, isCancelled, report, srcStats,
+            meta.kbps, mixed, workDir, outFileNoExt, onProgress, isCancelled, report,
         )
         mixed.file.delete()
         return res
@@ -197,7 +191,7 @@ class DialogueRemover(private val context: Context) {
         container: ContainerRules.Container, audioMime: String, kbps: Int,
         audio: PcmFile, workDir: File, outFileNoExt: File,
         onProgress: (Stage, Float) -> Unit, isCancelled: () -> Boolean,
-        report: Report, srcStats: Pair<Int, Long>,
+        report: Report,
     ): Result {
         val delay = encoderDelay(audioMime, audio.sampleRate, audio.channels, kbps, workDir)
         val aligned = if (delay > 0) PcmMath.advance(audio, delay.toLong(), File(workDir, "aligned.f32")) else audio
@@ -218,11 +212,6 @@ class DialogueRemover(private val context: Context) {
         encoded.delete()
         report.add("Результат: видео ${st.videoSamples} кадров до ${t(st.videoLastUs)}, звук ${st.audioSamples} пакетов до ${t(st.audioLastUs)}")
         // защита: обрезанный результат не выдаём как готовый
-        val lost = srcStats.second - st.videoLastUs
-        if (st.videoSamples < srcStats.first || lost > 1_000_000L) {
-            tmpOut.delete()
-            throw ReportedException("Видео собралось не полностью: ${t(st.videoLastUs)} из ${t(srcStats.second)}", report.toString())
-        }
         val audioEnd = audioStartUs + audio.frames * 1_000_000L / audio.sampleRate
         if (audioEnd - st.audioLastUs > 1_000_000L) {
             tmpOut.delete()

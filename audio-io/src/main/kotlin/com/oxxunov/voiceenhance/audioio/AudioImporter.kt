@@ -57,7 +57,9 @@ class AudioImporter(private val context: Context) {
         outFile: File,
         progress: (Float) -> Unit = {},
         isCancelled: () -> Boolean = { false },
-    ): DecodedTrack = decodeWithMediaCodec(uri, outFile, progress, isCancelled, trackIndex)
+        /** Длительность из заголовка файла — для прогресса, если у дорожки своей нет (часто в MKV). */
+        knownDurationUs: Long = -1L,
+    ): DecodedTrack = decodeWithMediaCodec(uri, outFile, progress, isCancelled, trackIndex, knownDurationUs)
 
     private fun decodeWithMediaCodec(
         uri: Uri,
@@ -65,6 +67,7 @@ class AudioImporter(private val context: Context) {
         progress: (Float) -> Unit,
         isCancelled: () -> Boolean,
         trackIndex: Int?,
+        knownDurationUs: Long = -1L,
     ): DecodedTrack {
         val extractor = try {
             Demuxers.open(context, uri)
@@ -80,7 +83,7 @@ class AudioImporter(private val context: Context) {
             extractor.selectTrack(track)
             val format = extractor.getTrackFormat(track)
             val mime = format.getString(MediaFormat.KEY_MIME)!!
-            val durationUs = if (format.containsKey(MediaFormat.KEY_DURATION)) format.getLong(MediaFormat.KEY_DURATION) else -1L
+            val durationUs = if (format.containsKey(MediaFormat.KEY_DURATION)) format.getLong(MediaFormat.KEY_DURATION) else knownDurationUs
 
             val c = MediaCodec.createDecoderByType(mime)
             codec = c
