@@ -106,8 +106,24 @@ class DialogueRemover(private val context: Context) {
 
         // ---------- разделение ----------
         onProgress(Stage.SEPARATE, 0f)
-        val sep = separator.separate(decoded.pcm, workDir, { onProgress(Stage.SEPARATE, it) }, isCancelled)
-        report.add("Разделение (${separator.id}): " + sep.stems.joinToString(", ") { "${it.name} ${t(it.pcm)}" })
+        val sepRaw = separator.separate(decoded.pcm, workDir, { onProgress(Stage.SEPARATE, it) }, isCancelled)
+        report.add("Разделение (${separator.id}): " + sepRaw.stems.joinToString(", ") { "${it.name} ${t(it.pcm)}" })
+
+        // ---------- совпадение речи с оригиналом по времени ----------
+        // вычитание убирает голос, только если речь совпадает с оригиналом до сэмпла
+        val al = com.oxxunov.voiceenhance.engine.StemAlign.measure(decoded.pcm, sepRaw.speech, isCancelled = isCancelled)
+        report.add(
+            "Речь от модели: уровень %.1f дБ к смеси, совпадение %.2f, сдвиг %d сэмпл."
+                .format(al.speechDb - al.mixDb, al.corr, al.lag)
+        )
+        val sep = if (al.lag != 0 && al.corr > 0.3 && al.gainAtBest > 1.05) {
+            SeparationResult(sepRaw.stems.map { st ->
+                val f = File(workDir, "al_${st.name}.f32")
+                val moved = com.oxxunov.voiceenhance.engine.StemAlign.shift(st.pcm, al.lag, f)
+                st.pcm.file.delete()
+                NamedStem(st.name, moved)
+            }).also { report.add("Сдвиг речи исправлен на ${al.lag} сэмпл.") }
+        } else sepRaw
 
         // ---------- удаление речи с выбранной силой ----------
         onProgress(Stage.REMOVE, 0f)
