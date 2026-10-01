@@ -81,8 +81,23 @@ jobs:
 
       - name: Fetch LAME 3.100 (MP3)
         run: |
-          curl -fL --retry 5 -o lame.tar.gz https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz
-          echo "ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e  lame.tar.gz" | sha256sum -c -
+          # SourceForge иногда отдаёт 522 — пробуем несколько зеркал, файл проверяется по SHA-256
+          SUM=ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e
+          ok=0
+          for url in \
+            https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz \
+            https://deb.debian.org/debian/pool/main/l/lame/lame_3.100.orig.tar.gz \
+            https://netix.dl.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz \
+            https://altushost-swe.dl.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz ; do
+            for attempt in 1 2 3; do
+              echo "== $url (попытка $attempt)"
+              if curl -fL --connect-timeout 20 --max-time 300 -o lame.tar.gz "$url" && echo "$SUM  lame.tar.gz" | sha256sum -c -; then
+                ok=1; break 2
+              fi
+              sleep 10
+            done
+          done
+          [ "$ok" = 1 ] || { echo "LAME не скачался ни с одного зеркала"; exit 1; }
           tar xzf lame.tar.gz
           mv lame-3.100 audio-io/src/main/cpp/lame
 
