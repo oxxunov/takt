@@ -269,6 +269,19 @@ fun DialogueScreen(vm: DialogueViewModel = viewModel()) {
                 }
             }
 
+            s.report?.let { rep ->
+                if (!s.running) {
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(stringResource(R.string.dlg_report_title), style = MaterialTheme.typography.titleSmall)
+                            androidx.compose.foundation.text.selection.SelectionContainer {
+                                Text(rep, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            }
+
             Text(stringResource(R.string.dlg_attribution), style = MaterialTheme.typography.labelSmall)
         }
     }

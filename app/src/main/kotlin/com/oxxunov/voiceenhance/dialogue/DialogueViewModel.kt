@@ -49,6 +49,8 @@ data class DialogueUi(
     val draftStartUs: Long? = null,
     val draftEndUs: Long? = null,
     val draftGains: Map<String, Float> = emptyMap(),
+    /** Отчёт последней обработки: длительности на каждом шаге. */
+    val report: String? = null,
 )
 
 data class RegionUi(val startUs: Long, val endUs: Long, val gains: Map<String, Float>)
@@ -99,6 +101,7 @@ class DialogueViewModel(app: Application) : AndroidViewModel(app) {
                 _state.update {
                     it.copy(
                         running = false, stage = 4, pct = 100, resultPath = if (exists) path else null,
+                        report = w.outputData.getString(DialogueWorker.KEY_REPORT),
                         stems = stems, draftGains = if (it.draftGains.keys == stems.toSet()) it.draftGains else defaultGains(stems),
                     )
                 }
@@ -107,7 +110,10 @@ class DialogueViewModel(app: Application) : AndroidViewModel(app) {
                 val err = w.outputData.getString(DialogueWorker.KEY_ERROR)
                 _state.update {
                     if (err == DialogueWorker.ERROR_CANCELLED) it.copy(running = false, cancelled = true, pct = 0)
-                    else it.copy(running = false, error = err ?: "Неизвестная ошибка", pct = 0)
+                    else it.copy(
+                        running = false, error = err ?: "Неизвестная ошибка", pct = 0,
+                        report = w.outputData.getString(DialogueWorker.KEY_REPORT),
+                    )
                 }
             }
             WorkInfo.State.CANCELLED -> _state.update { it.copy(running = false, cancelled = true, pct = 0) }

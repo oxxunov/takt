@@ -43,6 +43,7 @@ class DialogueWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
         const val ACTION_PROCESS = "process"
         const val ACTION_RENDER = "render"
         const val KEY_REGIONS = "regions"
+        const val KEY_REPORT = "report"
         const val KEY_RESULT = "result"
         const val KEY_ERROR = "error"
         const val KEY_STAGE = "stage"
@@ -152,11 +153,13 @@ class DialogueWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
                     )
                 }
             }
-            Result.success(workDataOf(KEY_RESULT to res.file.absolutePath))
+            Result.success(workDataOf(KEY_RESULT to res.file.absolutePath, KEY_REPORT to res.report.take(9000)))
         } catch (e: CancellationException) {
             throw e
         } catch (e: ProcessingCancelledException) {
             Result.failure(workDataOf(KEY_ERROR to ERROR_CANCELLED))
+        } catch (e: DialogueRemover.ReportedException) {
+            Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Ошибка"), KEY_REPORT to e.report.take(9000)))
         } catch (e: OutOfMemoryError) {
             Result.failure(workDataOf(KEY_ERROR to "Недостаточно памяти для обработки этого видео"))
         } catch (e: Throwable) {

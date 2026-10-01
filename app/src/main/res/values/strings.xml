@@ -66,6 +66,7 @@
     <string name="dlg_region_add">Добавить участок</string>
     <string name="dlg_region_apply">Применить правки</string>
     <string name="dlg_region_apply_note">Пересборка занимает секунды–минуты: заново кодируется только звук.</string>
+    <string name="dlg_report_title">Отчёт обработки (можно выделить и скопировать)</string>
     <string name="notif_channel">Обработка видео</string>
     <string name="notif_title">Удаление диалогов</string>
 </resources>

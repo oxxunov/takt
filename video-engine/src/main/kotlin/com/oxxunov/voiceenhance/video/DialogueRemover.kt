@@ -24,7 +24,23 @@ class DialogueRemover(private val context: Context) {
 
     enum class Stage { ANALYZE, SEPARATE, REMOVE, ASSEMBLE }
 
-    class Result(val file: File, val container: ContainerRules.Container)
+    class Result(val file: File, val container: ContainerRules.Container, val report: String)
+
+    /** Ошибка с отчётом обработки — чтобы было видно, на каком шаге всё оборвалось. */
+    class ReportedException(message: String, val report: String) : IOException(message)
+
+    private class Report {
+        private val sb = StringBuilder()
+        fun add(line: String) { sb.append(line).append('\n') }
+        override fun toString() = sb.toString().trimEnd()
+    }
+
+    private fun t(us: Long): String {
+        val ms = us / 1000
+        return "%d:%02d:%02d.%03d".format(ms / 3_600_000, (ms / 60_000) % 60, (ms / 1000) % 60, ms % 1000)
+    }
+
+    private fun t(p: PcmFile) = t((p.frames * 1_000_000L) / p.sampleRate)
 
     /** Участок ручной правки во времени видео и громкости источников по именам (speech/music/effects/other). */
     class RegionSpec(val startUs: Long, val endUs: Long, val gains: Map<String, Float>)
@@ -77,12 +93,27 @@ class DialogueRemover(private val context: Context) {
             maxOf(info.sizeBytes, 0L) * 2
         checkSpace(workDir, needBytes)
 
+        val report = Report()
+        val srcStats = VideoProbe.trackStats(context, source, info.videoTrack)
+        report.add("Источник: ${info.videoMime} ${info.width}×${info.height}, длительность по заголовку ${t(info.durationUs)}")
+        report.add("Видео в источнике: ${srcStats.first} кадров, последний на ${t(srcStats.second)}")
+        report.add("Звук: ${track.mime}, ${track.sampleRate} Гц, ${track.channels} кан., дорожка ${track.index}")
+        // Проверка до долгой обработки: видит ли Android весь файл, а не только начало
+        if (info.durationUs > 0 && info.durationUs - srcStats.second > 2_000_000L) {
+            throw ReportedException(
+                "Android читает из файла только ${t(srcStats.second)} из ${t(info.durationUs)}",
+                report.toString(),
+            )
+        }
+
         val importer = AudioImporter(context)
         val decoded = importer.decodeTrack(source, audioTrack, File(workDir, "audio.f32"), { onProgress(Stage.ANALYZE, it) }, isCancelled)
+        report.add("Звук декодирован: ${t(decoded.pcm)}, ${decoded.pcm.sampleRate} Гц, ${decoded.pcm.channels} кан., старт ${t(decoded.firstPtsUs)}")
 
         // ---------- разделение ----------
         onProgress(Stage.SEPARATE, 0f)
         val sep = separator.separate(decoded.pcm, workDir, { onProgress(Stage.SEPARATE, it) }, isCancelled)
+        report.add("Разделение (${separator.id}): " + sep.stems.joinToString(", ") { "${it.name} ${t(it.pcm)}" })
 
         // ---------- удаление речи с выбранной силой ----------
         onProgress(Stage.REMOVE, 0f)
@@ -90,6 +121,7 @@ class DialogueRemover(private val context: Context) {
             decoded.pcm, sep.speech, strength, File(workDir, "background.f32"),
             { onProgress(Stage.REMOVE, it * 0.3f) }, isCancelled,
         )
+        report.add("Фон после удаления речи: ${t(baseTmp)}")
         val kbps = if (plan.audioMime == "audio/opus") 160 else 256
 
         // ---------- сохраняем проект для ручной правки участков ----------
@@ -119,9 +151,10 @@ class DialogueRemover(private val context: Context) {
 
         val out = assemble(
             source, info.videoTrack, info.rotation, info.durationUs, decoded.firstPtsUs, plan.container, plan.audioMime,
-            kbps, base, workDir, outFileNoExt, onProgress, isCancelled,
+            kbps, base, workDir, outFileNoExt, onProgress, isCancelled, report, srcStats,
         )
         if (projectDir == null) base.file.delete()
+        if (projectDir != null) File(projectDir, "report.txt").writeText(out.report)
         return out
     }
 
@@ -148,9 +181,13 @@ class DialogueRemover(private val context: Context) {
         }.filter { it.endFrame > it.startFrame }
         onProgress(Stage.REMOVE, 0f)
         val mixed = RegionMixer.render(orig, base, stems, mix, File(workDir, "mixed.f32"), { onProgress(Stage.REMOVE, it * 0.3f) }, isCancelled)
+        val report = Report()
+        val srcStats = VideoProbe.trackStats(context, source, meta.videoTrack)
+        report.add("Ручная правка: участков ${mix.size}, звук после правки ${t(mixed)}")
+        report.add("Видео в источнике: ${srcStats.first} кадров, последний на ${t(srcStats.second)}")
         val res = assemble(
             source, meta.videoTrack, meta.rotation, meta.durationUs, meta.firstPtsUs, meta.container, meta.audioMime,
-            meta.kbps, mixed, workDir, outFileNoExt, onProgress, isCancelled,
+            meta.kbps, mixed, workDir, outFileNoExt, onProgress, isCancelled, report, srcStats,
         )
         mixed.file.delete()
         return res
@@ -162,25 +199,40 @@ class DialogueRemover(private val context: Context) {
         container: ContainerRules.Container, audioMime: String, kbps: Int,
         audio: PcmFile, workDir: File, outFileNoExt: File,
         onProgress: (Stage, Float) -> Unit, isCancelled: () -> Boolean,
+        report: Report, srcStats: Pair<Int, Long>,
     ): Result {
         val delay = encoderDelay(audioMime, audio.sampleRate, audio.channels, kbps, workDir)
         val aligned = if (delay > 0) PcmMath.advance(audio, delay.toLong(), File(workDir, "aligned.f32")) else audio
         val encoded = File(workDir, "audio_new." + if (container == ContainerRules.Container.WEBM) "webm" else "m4a")
         AudioFileEncoder.encode(aligned, encoded, audioMime, kbps, { onProgress(Stage.REMOVE, 0.3f + it * 0.7f) }, isCancelled)
         if (aligned !== audio) aligned.file.delete()
+        val encStats = VideoProbe.trackStats(context, android.net.Uri.fromFile(encoded), 0)
+        report.add("Звук закодирован: ${encStats.first} пакетов, до ${t(encStats.second)} (задержка кодера $delay сэмпл.)")
 
         onProgress(Stage.ASSEMBLE, 0f)
         val out = File(outFileNoExt.parentFile, outFileNoExt.name + "." + container.ext)
         out.parentFile?.mkdirs()
         val tmpOut = File(workDir, "out_tmp." + container.ext)
-        VideoRemuxer.remux(
+        val st = VideoRemuxer.remux(
             context, source, videoTrack, rotation, encoded, audioStartUs,
             durationUs, container, tmpOut, { onProgress(Stage.ASSEMBLE, it) }, isCancelled,
         )
         encoded.delete()
+        report.add("Результат: видео ${st.videoSamples} кадров до ${t(st.videoLastUs)}, звук ${st.audioSamples} пакетов до ${t(st.audioLastUs)}")
+        // защита: обрезанный результат не выдаём как готовый
+        val lost = srcStats.second - st.videoLastUs
+        if (st.videoSamples < srcStats.first || lost > 1_000_000L) {
+            tmpOut.delete()
+            throw ReportedException("Видео собралось не полностью: ${t(st.videoLastUs)} из ${t(srcStats.second)}", report.toString())
+        }
+        val audioEnd = audioStartUs + audio.frames * 1_000_000L / audio.sampleRate
+        if (audioEnd - st.audioLastUs > 1_000_000L) {
+            tmpOut.delete()
+            throw ReportedException("Звук собрался не полностью: ${t(st.audioLastUs)} из ${t(audioEnd)}", report.toString())
+        }
         // готовый файл заменяет прежний только после успешной сборки
         move(tmpOut, out)
-        return Result(out, container)
+        return Result(out, container, report.toString())
     }
 
     private fun move(src: File, dst: File): File {

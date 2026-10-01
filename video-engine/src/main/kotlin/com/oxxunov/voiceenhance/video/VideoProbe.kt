@@ -28,6 +28,27 @@ data class VideoInfo(
 )
 
 object VideoProbe {
+    /** Число сэмплов дорожки и время последнего (по самим данным, а не по заголовку). */
+    fun trackStats(context: Context, uri: Uri, track: Int): Pair<Int, Long> {
+        val ex = MediaExtractor()
+        try {
+            ex.setDataSource(context, uri, null)
+            ex.selectTrack(track)
+            var n = 0
+            var last = 0L
+            while (true) {
+                val t = ex.sampleTime
+                if (t < 0) break
+                n++
+                if (t > last) last = t
+                if (!ex.advance()) break
+            }
+            return n to last
+        } finally {
+            ex.release()
+        }
+    }
+
     fun probe(context: Context, uri: Uri): VideoInfo {
         val ex = MediaExtractor()
         try {

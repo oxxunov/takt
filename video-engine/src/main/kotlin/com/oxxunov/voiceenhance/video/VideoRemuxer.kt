@@ -16,6 +16,9 @@ import java.nio.ByteBuffer
  * новая аудиодорожка ставится на время первого сэмпла исходной — синхронизация сохраняется.
  */
 object VideoRemuxer {
+    /** Что реально записано в файл. */
+    class Stats(val videoSamples: Int, val videoLastUs: Long, val audioSamples: Int, val audioLastUs: Long)
+
     fun remux(
         context: Context,
         source: Uri,
@@ -28,7 +31,7 @@ object VideoRemuxer {
         out: File,
         progress: (Float) -> Unit,
         isCancelled: () -> Boolean,
-    ) {
+    ): Stats {
         val vex = MediaExtractor()
         val aex = MediaExtractor()
         var muxer: MediaMuxer? = null
@@ -59,6 +62,10 @@ object VideoRemuxer {
             val info = MediaCodec.BufferInfo()
             var vDone = false
             var aDone = false
+            var vCount = 0
+            var aCount = 0
+            var vLast = 0L
+            var aLast = 0L
             while (!vDone || !aDone) {
                 if (isCancelled()) throw ProcessingCancelledException()
                 val vTime = if (vDone) Long.MAX_VALUE else vex.sampleTime.let { if (it < 0) Long.MAX_VALUE else it }
@@ -77,10 +84,13 @@ object VideoRemuxer {
                 val flags = if (ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
                 info.set(0, size, maxOf(0L, if (useVideo) vTime else aTime), flags)
                 m.writeSampleData(if (useVideo) vt else at, buf, info)
+                if (useVideo) { vCount++; vLast = maxOf(vLast, info.presentationTimeUs) }
+                else { aCount++; aLast = maxOf(aLast, info.presentationTimeUs) }
                 ex.advance()
                 if (useVideo && durationUs > 0) progress((vTime.toDouble() / durationUs).toFloat().coerceIn(0f, 1f))
             }
             progress(1f)
+            return Stats(vCount, vLast, aCount, aLast)
         } catch (e: Throwable) {
             try { if (started) muxer?.stop() } catch (_: Exception) {}
             muxer?.release()
