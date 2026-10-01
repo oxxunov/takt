@@ -98,12 +98,10 @@ class DialogueRemover(private val context: Context) {
         report.add("Источник: ${info.videoMime} ${info.width}×${info.height}, длительность по заголовку ${t(info.durationUs)}, чтение: ${info.engine}")
         report.add("Видео в источнике: ${srcStats.first} кадров, последний на ${t(srcStats.second)}")
         report.add("Звук: ${track.mime}, ${track.sampleRate} Гц, ${track.channels} кан., дорожка ${track.index}")
-        // Проверка до долгой обработки: видит ли Android весь файл, а не только начало
+        // Последний кадр может стоять раньше конца файла законно: в видео с переменной частотой кадров
+        // (часто в аниме-MKV) неподвижная картинка хранится одним длинным кадром. Поэтому не ошибка, а заметка.
         if (info.durationUs > 0 && info.durationUs - srcStats.second > 2_000_000L) {
-            throw ReportedException(
-                "Android читает из файла только ${t(srcStats.second)} из ${t(info.durationUs)}",
-                report.toString(),
-            )
+            report.add("Заметка: последний кадр на ${t(srcStats.second)}, файл длится ${t(info.durationUs)} — последний кадр держится до конца")
         }
 
         val importer = AudioImporter(context)
