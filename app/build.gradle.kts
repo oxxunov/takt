@@ -48,8 +48,8 @@ dependencies {
     implementation(project(":ml-engine"))
     implementation(project(":video-engine"))
     implementation("androidx.work:work-runtime-ktx:2.9.1")
-    implementation("androidx.media3:media3-exoplayer:1.4.1")
-    implementation("androidx.media3:media3-ui:1.4.1")
+    implementation("androidx.media3:media3-exoplayer:1.5.1")
+    implementation("androidx.media3:media3-ui:1.5.1")
 
     val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
     implementation(composeBom)

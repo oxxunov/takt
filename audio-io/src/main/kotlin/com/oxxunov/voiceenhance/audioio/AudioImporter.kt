@@ -3,7 +3,6 @@ package com.oxxunov.voiceenhance.audioio
 import android.content.Context
 import android.media.AudioFormat
 import android.media.MediaCodec
-import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
 import com.oxxunov.voiceenhance.engine.PcmFile
@@ -67,11 +66,14 @@ class AudioImporter(private val context: Context) {
         isCancelled: () -> Boolean,
         trackIndex: Int?,
     ): DecodedTrack {
-        val extractor = MediaExtractor()
+        val extractor = try {
+            Demuxers.open(context, uri)
+        } catch (e: Exception) {
+            throw IOException("Файл повреждён или формат не поддерживается")
+        }
         var codec: MediaCodec? = null
         var writer: PcmWriter? = null
         try {
-            extractor.setDataSource(context, uri, null)
             val track = trackIndex ?: (0 until extractor.trackCount).firstOrNull {
                 extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
             } ?: throw IOException("В файле нет аудиодорожки")
@@ -174,7 +176,7 @@ class AudioImporter(private val context: Context) {
         } finally {
             try { codec?.stop() } catch (_: Exception) {}
             codec?.release()
-            extractor.release()
+            extractor.close()
         }
     }
 }

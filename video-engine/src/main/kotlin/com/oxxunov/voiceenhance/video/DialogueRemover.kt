@@ -95,7 +95,7 @@ class DialogueRemover(private val context: Context) {
 
         val report = Report()
         val srcStats = VideoProbe.trackStats(context, source, info.videoTrack)
-        report.add("Источник: ${info.videoMime} ${info.width}×${info.height}, длительность по заголовку ${t(info.durationUs)}")
+        report.add("Источник: ${info.videoMime} ${info.width}×${info.height}, длительность по заголовку ${t(info.durationUs)}, чтение: ${info.engine}")
         report.add("Видео в источнике: ${srcStats.first} кадров, последний на ${t(srcStats.second)}")
         report.add("Звук: ${track.mime}, ${track.sampleRate} Гц, ${track.channels} кан., дорожка ${track.index}")
         // Проверка до долгой обработки: видит ли Android весь файл, а не только начало

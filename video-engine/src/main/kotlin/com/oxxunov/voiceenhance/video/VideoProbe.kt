@@ -1,7 +1,7 @@
 package com.oxxunov.voiceenhance.video
 
 import android.content.Context
-import android.media.MediaExtractor
+import com.oxxunov.voiceenhance.audioio.Demuxers
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.net.Uri
@@ -25,14 +25,15 @@ data class VideoInfo(
     val videoTrack: Int,
     val videoMime: String,
     val audioTracks: List<AudioTrackInfo>,
+    /** Каким движком читается файл: ExoPlayer или Android. */
+    val engine: String = "",
 )
 
 object VideoProbe {
     /** Число сэмплов дорожки и время последнего (по самим данным, а не по заголовку). */
     fun trackStats(context: Context, uri: Uri, track: Int): Pair<Int, Long> {
-        val ex = MediaExtractor()
+        val ex = Demuxers.open(context, uri)
         try {
-            ex.setDataSource(context, uri, null)
             ex.selectTrack(track)
             var n = 0
             var last = 0L
@@ -45,18 +46,17 @@ object VideoProbe {
             }
             return n to last
         } finally {
-            ex.release()
+            ex.close()
         }
     }
 
     fun probe(context: Context, uri: Uri): VideoInfo {
-        val ex = MediaExtractor()
+        val ex = try {
+            Demuxers.open(context, uri)
+        } catch (e: Exception) {
+            throw IOException("Файл повреждён или формат не поддерживается")
+        }
         try {
-            try {
-                ex.setDataSource(context, uri, null)
-            } catch (e: Exception) {
-                throw IOException("Файл повреждён или формат не поддерживается")
-            }
             var videoTrack = -1
             var videoMime = ""
             var width = 0
@@ -85,6 +85,17 @@ object VideoProbe {
                 }
             }
             if (videoTrack < 0) throw IOException("В файле нет видеодорожки")
+            // длительность по заголовку файла (системное чтение метаданных)
+            try {
+                MediaMetadataRetriever().apply {
+                    setDataSource(context, uri)
+                    extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let {
+                        duration = maxOf(duration, it * 1000)
+                    }
+                    release()
+                }
+            } catch (_: Exception) {
+            }
             if (rotation == 0) {
                 // в части файлов поворот есть только в метаданных контейнера
                 try {
@@ -99,9 +110,9 @@ object VideoProbe {
             val size = context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { c ->
                 if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else -1L
             } ?: -1L
-            return VideoInfo(duration, width, height, rotation, size, videoTrack, videoMime, audio)
+            return VideoInfo(duration, width, height, rotation, size, videoTrack, videoMime, audio, ex.engine)
         } finally {
-            ex.release()
+            ex.close()
         }
     }
 }

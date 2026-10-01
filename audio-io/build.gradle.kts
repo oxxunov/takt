@@ -30,4 +30,5 @@ android {
 dependencies {
     api(project(":audio-engine"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("androidx.media3:media3-exoplayer:1.5.1")
 }
