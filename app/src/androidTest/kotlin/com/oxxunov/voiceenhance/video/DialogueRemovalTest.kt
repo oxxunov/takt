@@ -201,6 +201,40 @@ class DialogueRemovalTest {
         }
     }
 
+    // 11. аудиофайл без видео (как MP3 с телефона): результат — MP3 той же длины, ручная правка тоже работает
+    @Test
+    fun audioFileGivesMp3() {
+        val sr = 44100
+        val secs = 5
+        val pcm = File(dir, "tone.f32")
+        com.oxxunov.voiceenhance.engine.PcmWriter(pcm, sr, 2).use { w ->
+            val n = sr * secs
+            val l = FloatArray(n) { i -> (0.3 * kotlin.math.sin(2 * Math.PI * 220 * i / sr)).toFloat() }
+            w.write(arrayOf(l, l), 0, n)
+        }
+        val src = File(dir, "song.m4a")
+        AudioFileEncoder.encode(com.oxxunov.voiceenhance.engine.PcmFile(pcm, sr, 2), src, "audio/mp4a-latm", 192)
+        val info = VideoProbe.probe(ctx, Uri.fromFile(src))
+        assertTrue("аудиофайл", info.isAudioOnly)
+        assertEquals(1, info.audioTracks.size)
+        val project = File(dir, "project_a")
+        val res = DialogueRemover(ctx).run(
+            Uri.fromFile(src), info.audioTracks[0].index, DeepFilterSpeechSeparator(ctx), RemovalStrength.MEDIUM,
+            File(dir, "work_a"), File(dir, "song_no_dialogues"), { _, _ -> }, { false }, projectDir = project,
+        )
+        assertTrue(res.file.name, res.file.name.endsWith("_no_dialogues.mp3"))
+        val out = AudioImporter(ctx).import(Uri.fromFile(res.file), File(dir, "back.f32"))
+        assertEquals(sr, out.sampleRate)
+        assertTrue("длительность ${out.durationSeconds}", abs(out.durationSeconds - info.durationUs / 1e6) < 0.15)
+
+        val again = DialogueRemover(ctx).render(
+            Uri.fromFile(src), project,
+            listOf(DialogueRemover.RegionSpec(1_000_000, 2_000_000, mapOf("speech" to 1f, "other" to 1f))),
+            File(dir, "work_a2"), File(dir, "song_no_dialogues"), { _, _ -> }, { false },
+        )
+        assertEquals(res.file.absolutePath, again.file.absolutePath)
+    }
+
     // 10. большой файл: нехватка места даёт понятную ошибку
     @Test
     fun notEnoughSpace() {

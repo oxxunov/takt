@@ -17,8 +17,9 @@ import java.io.IOException
 import kotlin.math.abs
 
 /**
- * Удаление диалогов из видео:
+ * Удаление диалогов из видео и аудиофайлов:
  * извлечение звука → разделение → удаление речи → кодирование → замена дорожки (remux, видео не перекодируется).
+ * Для аудиофайла (MP3, M4A, WAV, FLAC…) результат сохраняется в MP3 320 кбит/с.
  */
 class DialogueRemover(private val context: Context) {
 
@@ -82,9 +83,10 @@ class DialogueRemover(private val context: Context) {
         val info = VideoProbe.probe(context, source)
         val track = info.audioTracks.firstOrNull { it.index == audioTrack }
             ?: throw IOException("В видео нет выбранной аудиодорожки")
-        val plan = ContainerRules.plan(info.videoMime, Build.VERSION.SDK_INT)
+        val audioOnly = info.isAudioOnly
+        val plan = if (audioOnly) null else ContainerRules.plan(info.videoMime, Build.VERSION.SDK_INT)
             ?: throw IOException("Видео в формате ${info.videoMime} нельзя сохранить без перекодирования на этой версии Android")
-        if (plan.container == ContainerRules.Container.WEBM && track.sampleRate !in ContainerRules.OPUS_RATES) {
+        if (plan != null && plan.container == ContainerRules.Container.WEBM && track.sampleRate !in ContainerRules.OPUS_RATES) {
             throw IOException("Для WEBM нужен звук 48 кГц, в файле ${track.sampleRate} Гц")
         }
         // оценка места: несколько float-копий звука (включая сохранённые для ручной правки) + размер видео
@@ -94,7 +96,8 @@ class DialogueRemover(private val context: Context) {
         checkSpace(workDir, needBytes)
 
         val report = Report()
-        report.add("Источник: ${info.videoMime} ${info.width}×${info.height}, длительность по заголовку ${t(info.durationUs)}, чтение: ${info.engine}")
+        if (audioOnly) report.add("Источник: аудиофайл, длительность по заголовку ${t(info.durationUs)}, чтение: ${info.engine}")
+        else report.add("Источник: ${info.videoMime} ${info.width}×${info.height}, длительность по заголовку ${t(info.durationUs)}, чтение: ${info.engine}")
         report.add("Звук: ${track.mime}, ${track.sampleRate} Гц, ${track.channels} кан., дорожка ${track.index}")
 
         val importer = AudioImporter(context)
@@ -132,7 +135,13 @@ class DialogueRemover(private val context: Context) {
             { onProgress(Stage.REMOVE, it * 0.3f) }, isCancelled,
         )
         report.add("Фон после удаления речи: ${t(baseTmp)}")
-        val kbps = if (plan.audioMime == "audio/opus") 160 else 256
+        val container = plan?.container ?: ContainerRules.Container.MP4
+        val audioMime = plan?.audioMime ?: AUDIO_ONLY_MIME
+        val kbps = when (audioMime) {
+            "audio/opus" -> 160
+            AUDIO_ONLY_MIME -> 320
+            else -> 256
+        }
 
         // ---------- сохраняем проект для ручной правки участков ----------
         val base: PcmFile
@@ -150,7 +159,7 @@ class DialogueRemover(private val context: Context) {
             for ((name, pcm) in stems) move(pcm, File(projectDir, "stem_$name.f32"))
             val meta = Meta(
                 orig.sampleRate, orig.channels, decoded.firstPtsUs, info.videoTrack, info.rotation, info.durationUs,
-                plan.container, plan.audioMime, kbps, stems.map { it.first },
+                container, audioMime, kbps, stems.map { it.first },
             )
             File(projectDir, "meta.json").writeText(meta.toJson().toString())
         } else {
@@ -160,7 +169,7 @@ class DialogueRemover(private val context: Context) {
         }
 
         val out = assemble(
-            source, info.videoTrack, info.rotation, info.durationUs, decoded.firstPtsUs, plan.container, plan.audioMime,
+            source, info.videoTrack, info.rotation, info.durationUs, decoded.firstPtsUs, container, audioMime,
             kbps, base, workDir, outFileNoExt, onProgress, isCancelled, report,
         )
         if (projectDir == null) base.file.delete()
@@ -209,6 +218,7 @@ class DialogueRemover(private val context: Context) {
         onProgress: (Stage, Float) -> Unit, isCancelled: () -> Boolean,
         report: Report,
     ): Result {
+        if (videoTrack < 0) return assembleAudioFile(audio, workDir, outFileNoExt, kbps, onProgress, isCancelled, report)
         val delay = encoderDelay(audioMime, audio.sampleRate, audio.channels, kbps, workDir)
         val aligned = if (delay > 0) PcmMath.advance(audio, delay.toLong(), File(workDir, "aligned.f32")) else audio
         val encoded = File(workDir, "audio_new." + if (container == ContainerRules.Container.WEBM) "webm" else "m4a")
@@ -236,6 +246,28 @@ class DialogueRemover(private val context: Context) {
         // готовый файл заменяет прежний только после успешной сборки
         move(tmpOut, out)
         return Result(out, container, report.toString())
+    }
+
+    /**
+     * Аудиофайл: результат — MP3 320 кбит/с (LAME). Если MP3 не подходит (больше 2 каналов
+     * или необычная частота) — M4A AAC 256 кбит/с.
+     */
+    private fun assembleAudioFile(
+        audio: PcmFile, workDir: File, outFileNoExt: File, kbps: Int,
+        onProgress: (Stage, Float) -> Unit, isCancelled: () -> Boolean, report: Report,
+    ): Result {
+        val mp3 = audio.channels <= 2 && audio.sampleRate in MP3_RATES
+        val ext = if (mp3) "mp3" else "m4a"
+        val tmpOut = File(workDir, "out_tmp.$ext")
+        val enc: (Float) -> Unit = { onProgress(Stage.REMOVE, 0.3f + it * 0.7f) }
+        if (mp3) com.oxxunov.voiceenhance.audioio.Mp3Encoder.encode(audio, tmpOut, kbps, enc, isCancelled)
+        else com.oxxunov.voiceenhance.audioio.AacEncoder.encode(audio, tmpOut, 256, enc, isCancelled)
+        onProgress(Stage.ASSEMBLE, 1f)
+        report.add("Результат: ${if (mp3) "MP3 $kbps" else "M4A AAC 256"} кбит/с, длительность ${t(audio)}")
+        val out = File(outFileNoExt.parentFile, outFileNoExt.name + "." + ext)
+        out.parentFile?.mkdirs()
+        move(tmpOut, out)
+        return Result(out, ContainerRules.Container.MP4, report.toString())
     }
 
     private fun move(src: File, dst: File): File {
@@ -292,5 +324,9 @@ class DialogueRemover(private val context: Context) {
         }
 
         private val delayCache = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+        /** Метка «аудиофайл» в сохранённом проекте (для ручной правки участков). */
+        const val AUDIO_ONLY_MIME = "audio/mpeg"
+        private val MP3_RATES = setOf(8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000)
     }
 }

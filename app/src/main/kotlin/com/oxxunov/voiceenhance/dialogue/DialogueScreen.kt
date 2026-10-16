@@ -70,6 +70,12 @@ fun DialogueScreen(vm: DialogueViewModel = viewModel()) {
     val saveWebm = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("video/webm")) { uri ->
         if (uri != null) vm.saveTo(uri)
     }
+    val saveMp3 = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/mpeg")) { uri ->
+        if (uri != null) vm.saveTo(uri)
+    }
+    val saveM4a = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/mp4")) { uri ->
+        if (uri != null) vm.saveTo(uri)
+    }
     val notifPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { vm.start() }
 
     val player = remember { ExoPlayer.Builder(context).build() }
@@ -121,7 +127,7 @@ fun DialogueScreen(vm: DialogueViewModel = viewModel()) {
 
             if (s.uri == null || (!s.running && s.resultPath == null)) {
                 Button(
-                    onClick = { pick.launch(arrayOf("video/*")) },
+                    onClick = { pick.launch(arrayOf("video/*", "audio/*")) },
                     enabled = !s.running,
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(stringResource(R.string.dlg_pick)) }
@@ -135,7 +141,9 @@ fun DialogueScreen(vm: DialogueViewModel = viewModel()) {
                 val ratio = if (w > 0 && h > 0) (w.toFloat() / h).coerceIn(0.4f, 2.5f) else 16f / 9f
                 AndroidView(
                     factory = { PlayerView(it).apply { this.player = player; useController = true } },
-                    modifier = Modifier.fillMaxWidth().aspectRatio(ratio),
+                    // у аудиофайла картинки нет — только панель воспроизведения
+                    modifier = if (info.isAudioOnly) Modifier.fillMaxWidth().height(110.dp)
+                    else Modifier.fillMaxWidth().aspectRatio(ratio),
                 )
             }
 
@@ -146,7 +154,7 @@ fun DialogueScreen(vm: DialogueViewModel = viewModel()) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(s.name, style = MaterialTheme.typography.titleSmall)
                         Text(stringResource(R.string.dlg_info_duration, fmtTime(info.durationUs / 1e6)))
-                        Text(stringResource(R.string.dlg_info_resolution, info.width, info.height))
+                        if (!info.isAudioOnly) Text(stringResource(R.string.dlg_info_resolution, info.width, info.height))
                         if (info.sizeBytes > 0) Text(stringResource(R.string.dlg_info_size, Formatter.formatShortFileSize(context, info.sizeBytes)))
                         if (info.audioTracks.isEmpty()) {
                             Text(stringResource(R.string.dlg_info_audio_no), color = MaterialTheme.colorScheme.error)
@@ -252,7 +260,14 @@ fun DialogueScreen(vm: DialogueViewModel = viewModel()) {
                             onSelect = { vm.showResult(it) },
                         )
                         Button(
-                            onClick = { if (result.extension == "webm") saveWebm.launch(result.name) else saveMp4.launch(result.name) },
+                            onClick = {
+                                when (result.extension) {
+                                    "webm" -> saveWebm.launch(result.name)
+                                    "mp3" -> saveMp3.launch(result.name)
+                                    "m4a" -> saveM4a.launch(result.name)
+                                    else -> saveMp4.launch(result.name)
+                                }
+                            },
                             modifier = Modifier.fillMaxWidth(),
                         ) { Text(stringResource(R.string.dlg_save)) }
                         OutlinedButton(

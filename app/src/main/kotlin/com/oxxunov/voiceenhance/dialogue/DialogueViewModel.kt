@@ -214,7 +214,7 @@ class DialogueViewModel(app: Application) : AndroidViewModel(app) {
                 _state.update { it.copy(info = info, track = t, probing = false) }
                 prefs.edit().putString("uri", uri.toString()).putString("name", name).putInt("track", t ?: -1).apply()
             } catch (e: Exception) {
-                _state.update { it.copy(probing = false, error = e.message ?: "Не удалось открыть видео") }
+                _state.update { it.copy(probing = false, error = e.message ?: "Не удалось открыть файл") }
             }
         }
     }
@@ -303,7 +303,12 @@ class DialogueViewModel(app: Application) : AndroidViewModel(app) {
         val app = getApplication<Application>()
         val uri = FileProvider.getUriForFile(app, "${app.packageName}.files", f)
         val send = Intent(Intent.ACTION_SEND).apply {
-            type = if (f.extension == "webm") "video/webm" else "video/mp4"
+            type = when (f.extension) {
+                "webm" -> "video/webm"
+                "mp3" -> "audio/mpeg"
+                "m4a" -> "audio/mp4"
+                else -> "video/mp4"
+            }
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }

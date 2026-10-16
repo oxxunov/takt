@@ -27,7 +27,10 @@ data class VideoInfo(
     val audioTracks: List<AudioTrackInfo>,
     /** Каким движком читается файл: ExoPlayer или Android. */
     val engine: String = "",
-)
+) {
+    /** Аудиофайл без видео (MP3, M4A, WAV, FLAC…). */
+    val isAudioOnly: Boolean get() = videoTrack < 0
+}
 
 object VideoProbe {
     /** Число сэмплов дорожки и время последнего (по самим данным, а не по заголовку). */
@@ -84,7 +87,7 @@ object VideoProbe {
                     )
                 }
             }
-            if (videoTrack < 0) throw IOException("В файле нет видеодорожки")
+            if (videoTrack < 0 && audio.isEmpty()) throw IOException("В файле нет ни видео, ни звука")
             // длительность по заголовку файла (системное чтение метаданных)
             try {
                 MediaMetadataRetriever().apply {
@@ -97,8 +100,8 @@ object VideoProbe {
             } catch (_: Exception) {
             }
             if (duration <= 0) {
-                // во фрагментированных MP4 длительности в заголовке нет — берём по самим кадрам
-                ex.selectTrack(videoTrack)
+                // во фрагментированных MP4 длительности в заголовке нет — берём по самим кадрам (у аудиофайла — по звуку)
+                ex.selectTrack(if (videoTrack >= 0) videoTrack else audio.first().index)
                 var n = 0
                 var last = 0L
                 while (true) {
@@ -110,7 +113,7 @@ object VideoProbe {
                 }
                 duration = if (n > 1) last + last / (n - 1) else last
             }
-            if (rotation == 0) {
+            if (rotation == 0 && videoTrack >= 0) {
                 // в части файлов поворот есть только в метаданных контейнера
                 try {
                     MediaMetadataRetriever().apply {

@@ -116,7 +116,7 @@ class DialogueWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
             if (!render) deleteRecursively() // храним только последний результат
             mkdirs()
         }
-        val base = name.substringBeforeLast('.').replace(Regex("[^\\p{L}\\p{N}._ -]"), "_").ifBlank { "video" }
+        val base = name.substringBeforeLast('.').replace(Regex("[^\\p{L}\\p{N}._ -]"), "_").ifBlank { "file" }
         var lastPct = -1
         var lastStage = -1
         return try {

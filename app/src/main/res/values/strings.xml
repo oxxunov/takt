@@ -5,10 +5,10 @@
     <string name="tab_voice">Голос</string>
     <string name="tab_dialogue">Удалить диалоги</string>
 
-    <string name="dlg_title">Удаление диалогов из видео</string>
-    <string name="dlg_privacy">Видео обрабатывается на устройстве и не загружается на сервер.</string>
-    <string name="dlg_pick">Выбрать видео</string>
-    <string name="dlg_pick_other">Обработать другое видео</string>
+    <string name="dlg_title">Удаление диалогов из видео и аудио</string>
+    <string name="dlg_privacy">Файл обрабатывается на устройстве и не загружается на сервер.</string>
+    <string name="dlg_pick">Выбрать видео или аудио (MP3 и др.)</string>
+    <string name="dlg_pick_other">Обработать другой файл</string>
     <string name="dlg_start">Удалить диалоги</string>
     <string name="dlg_cancel">Отменить обработку</string>
     <string name="dlg_info_duration">Длительность: %1$s</string>
@@ -38,16 +38,16 @@
     <string name="dlg_stage_analyze">Анализ аудио…</string>
     <string name="dlg_stage_separate">Разделение звуковых источников…</string>
     <string name="dlg_stage_remove">Удаление речи…</string>
-    <string name="dlg_stage_assemble">Сборка видео…</string>
+    <string name="dlg_stage_assemble">Сборка результата…</string>
     <string name="dlg_stage_done">Готово</string>
     <string name="dlg_background_note">Можно свернуть приложение — обработка продолжится, прогресс виден в уведомлении.</string>
 
     <string name="dlg_done">Обработка завершена</string>
     <string name="dlg_view">Просмотреть результат</string>
     <string name="dlg_view_original">Показать оригинал</string>
-    <string name="dlg_save">Сохранить видео</string>
+    <string name="dlg_save">Сохранить</string>
     <string name="dlg_share">Поделиться</string>
-    <string name="dlg_saved">Видео сохранено</string>
+    <string name="dlg_saved">Файл сохранён</string>
     <string name="dlg_cancelled">Обработка отменена</string>
     <string name="dlg_failed">Ошибка: %1$s</string>
     <string name="dlg_ok">OK</string>
