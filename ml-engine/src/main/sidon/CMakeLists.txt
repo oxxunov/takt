@@ -17,6 +17,10 @@ if (NOT VESIDON_NAME)
     set(VESIDON_NAME vesidon)
 endif()
 
+# Как в CrispASR: имена тензоров Sidon длиннее стандартных 64 символов ggml.
+# Задаётся до add_subdirectory(ggml), чтобы ggml и наш код видели одинаковую структуру тензора.
+add_compile_definitions(GGML_MAX_NAME=128)
+
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
 set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
