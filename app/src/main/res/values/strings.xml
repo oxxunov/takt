@@ -25,6 +25,8 @@
     <string name="dlg_mode_fast_note">DeepFilterNet3: быстро, но пение в песнях тоже считает голосом и может убрать.</string>
     <string name="dlg_mode_standard_note">BandIt v2: модель для кино — отделяет диалоги от музыки и эффектов, песни сохраняются. В несколько раз дольше быстрой.</string>
     <string name="dlg_mode_high_note">BandIt v2 с двойным перекрытием фрагментов: стыки чище, но примерно в полтора раза дольше стандартной.</string>
+    <string name="dlg_mode_voice">Убрать весь голос</string>
+    <string name="dlg_mode_voice_note">BS-Roformer: одна из сильнейших открытых моделей выделения голоса — остатков речи меньше всего. Убирает и пение в песнях. Самый медленный режим: примерно в 2–3 раза дольше стандартного.</string>
     <string name="dlg_strength_title">Сила удаления речи</string>
     <string name="dlg_strength_low">Низкая</string>
     <string name="dlg_strength_medium">Средняя</string>
@@ -33,7 +35,7 @@
     <string name="dlg_ab_title">Сравнение A/B — позиция сохраняется при переключении:</string>
     <string name="dlg_ab_original">Оригинал</string>
     <string name="dlg_ab_result">Без диалогов</string>
-    <string name="dlg_attribution">Модели: DeepFilterNet3 (MIT/Apache-2.0); BandIt v2 © K. N. Watcharasupat, C.-W. Wu, I. Orife — веса по лицензии CC BY-SA 4.0 (zenodo.org/records/12701995), код Apache-2.0.</string>
+    <string name="dlg_attribution">Модели: DeepFilterNet3 (MIT/Apache-2.0); BandIt v2 © K. N. Watcharasupat, C.-W. Wu, I. Orife — веса по лицензии CC BY-SA 4.0 (zenodo.org/records/12701995), код Apache-2.0; BS-Roformer (viperx, UVR) — код Music-Source-Separation-Training (MIT).</string>
 
     <string name="dlg_stage_analyze">Анализ аудио…</string>
     <string name="dlg_stage_separate">Разделение звуковых источников…</string>

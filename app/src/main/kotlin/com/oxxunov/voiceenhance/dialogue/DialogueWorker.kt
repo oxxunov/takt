@@ -38,6 +38,8 @@ class DialogueWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
         const val MODE_FAST = "fast"
         const val MODE_STANDARD = "standard"
         const val MODE_HIGH = "high"
+        /** BS-Roformer: убирает весь голос, включая пение. */
+        const val MODE_VOICE = "voice"
         const val KEY_STRENGTH = "strength"
         const val KEY_ACTION = "action"
         const val ACTION_PROCESS = "process"
@@ -101,6 +103,7 @@ class DialogueWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
         val separator = when (inputData.getString(KEY_MODE)) {
             MODE_STANDARD -> BanditSpeechSeparator(applicationContext, highQuality = false)
             MODE_HIGH -> BanditSpeechSeparator(applicationContext, highQuality = true)
+            MODE_VOICE -> com.oxxunov.voiceenhance.video.RoformerVoiceSeparator(applicationContext)
             else -> DeepFilterSpeechSeparator(applicationContext)
         }
         val strength = runCatching { RemovalStrength.valueOf(inputData.getString(KEY_STRENGTH) ?: "MEDIUM") }

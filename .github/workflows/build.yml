@@ -9,6 +9,8 @@ env:
   DFN_TAG: v0.5.6          # официальный DeepFilterNet (MIT/Apache-2.0)
   SRC_TAG: 0.2.2           # libsamplerate (BSD-2)
   CRISP_SHA: bf6fbe126e4c91487494ae20b9b8fea6553f5680   # CrispASR (MIT) — рантайм Sidon на ggml
+  MSST_SHA: 6fdad13686bb7e84d029ec66f9dbe76e65c93ebf   # Music-Source-Separation-Training (MIT) — код BS-Roformer
+  ROFORMER_SHA256: 5b84f37e8d444c8cb30c79d77f613a41c05868ff9c9ac6c7049c00aefae115aa  # viperx BS-Roformer ep_317
   SIDON_SHA256: 7e27282a09be71e2f37e87731a074b291a2cab0d3f1de4a8f8eb48421587e912  # sidon-v0.1-f16.gguf
 
 jobs:
@@ -206,6 +208,38 @@ jobs:
           sha256sum -c sums.txt
           rm sums.txt
           ls -la
+
+      # ---------- BS-Roformer («Убрать весь голос»): экспорт в ONNX со сверкой с оригиналом ----------
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Export BS-Roformer to ONNX
+        run: |
+          set -e
+          mkdir msst && cd msst
+          git init -q
+          git remote add origin https://github.com/ZFTurbo/Music-Source-Separation-Training.git
+          git fetch -q --depth 1 origin "$MSST_SHA"
+          git checkout -q FETCH_HEAD
+          cd ..
+          python -m pip install --quiet torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install --quiet onnx==1.17.0 onnxruntime==1.19.2 numpy einops==0.8.1 \
+            rotary_embedding_torch==0.3.5 beartype==0.14.1 pyyaml packaging librosa
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            if curl -fL --retry 3 --connect-timeout 30 -o bsr.ckpt \
+                https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/model_bs_roformer_ep_317_sdr_12.9755.ckpt \
+               && echo "$ROFORMER_SHA256  bsr.ckpt" | sha256sum -c -; then ok=1; break; fi
+            sleep 15
+          done
+          [ "$ok" = 1 ] || { echo "Веса BS-Roformer не скачались"; exit 1; }
+          D=ml-engine/src/main/assets/roformer
+          mkdir -p $D
+          python ml-engine/roformer/export_bs_roformer.py msst \
+            msst/configs/viperx/model_bs_roformer_ep_317_sdr_12.9755.yaml bsr.ckpt $D/bs_roformer_vocals_44k.onnx
+          rm -f bsr.ckpt
+          ls -la $D
 
       - name: Inspect BandIt model (diagnostics)
         continue-on-error: true

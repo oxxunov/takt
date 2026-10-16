@@ -41,6 +41,7 @@ data class DialogueUi(
     val mode: String = DialogueWorker.MODE_FAST,
     val strength: com.oxxunov.voiceenhance.engine.RemovalStrength = com.oxxunov.voiceenhance.engine.RemovalStrength.MEDIUM,
     val banditAvailable: Boolean = false,
+    val roformerAvailable: Boolean = false,
     /** Источники, сохранённые после обработки (speech / music / effects или speech / other). */
     val stems: List<String> = emptyList(),
     /** Готовые участки ручной правки. */
@@ -65,13 +66,16 @@ class DialogueViewModel(app: Application) : AndroidViewModel(app) {
     private val observer = Observer<List<WorkInfo>> { list -> onWork(list.firstOrNull()) }
 
     private val banditAvailable = com.oxxunov.voiceenhance.ml.BanditModel(app).isAvailable()
+    private val roformerAvailable = com.oxxunov.voiceenhance.ml.RoformerVoiceModel(app).isAvailable()
 
     init {
         val savedMode = prefs.getString("mode", DialogueWorker.MODE_FAST)!!.let { if (it == "bandit") DialogueWorker.MODE_STANDARD else it }
         val savedStrength = runCatching {
             com.oxxunov.voiceenhance.engine.RemovalStrength.valueOf(prefs.getString("strength", "MEDIUM")!!)
         }.getOrDefault(com.oxxunov.voiceenhance.engine.RemovalStrength.MEDIUM)
-        _state.update { it.copy(banditAvailable = banditAvailable, mode = savedMode, strength = savedStrength) }
+        _state.update {
+            it.copy(banditAvailable = banditAvailable, roformerAvailable = roformerAvailable, mode = savedMode, strength = savedStrength)
+        }
         // восстановление после закрытия приложения
         prefs.getString("uri", null)?.let { u ->
             val name = prefs.getString("name", "") ?: ""
@@ -201,7 +205,7 @@ class DialogueViewModel(app: Application) : AndroidViewModel(app) {
         } catch (_: Exception) {
         }
         wm.pruneWork()
-        _state.update { DialogueUi(banditAvailable = banditAvailable, mode = it.mode, strength = it.strength) }
+        _state.update { DialogueUi(banditAvailable = banditAvailable, roformerAvailable = roformerAvailable, mode = it.mode, strength = it.strength) }
         load(uri, name, null)
     }
 
@@ -277,7 +281,7 @@ class DialogueViewModel(app: Application) : AndroidViewModel(app) {
         val mode = _state.value.mode
         val strength = _state.value.strength
         prefs.edit().clear().putString("mode", mode).putString("strength", strength.name).apply()
-        _state.update { DialogueUi(banditAvailable = banditAvailable, mode = mode, strength = strength) }
+        _state.update { DialogueUi(banditAvailable = banditAvailable, roformerAvailable = roformerAvailable, mode = mode, strength = strength) }
     }
 
     fun resultFile(): File? = _state.value.resultPath?.let { File(it) }?.takeIf { it.exists() }

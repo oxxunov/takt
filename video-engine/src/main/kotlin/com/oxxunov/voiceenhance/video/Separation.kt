@@ -5,6 +5,7 @@ import com.oxxunov.voiceenhance.engine.PcmFile
 import com.oxxunov.voiceenhance.ml.BanditModel
 import com.oxxunov.voiceenhance.ml.DeepFilterDenoiser
 import com.oxxunov.voiceenhance.ml.Resampler
+import com.oxxunov.voiceenhance.ml.RoformerVoiceModel
 import java.io.File
 
 /** Источник звука после разделения: speech / music / effects (или другой). */
@@ -73,5 +74,34 @@ class BanditSpeechSeparator(
         }
         progress(1f)
         return SeparationResult(out)
+    }
+}
+
+/**
+ * «Убрать весь голос»: BS-Roformer (viperx) выделяет весь голос — речь, шёпот, крик и пение.
+ * Остатков речи обычно меньше, чем у кино-моделей, но вокал в песнях тоже уходит.
+ * Модель работает на 44.1 кГц; результат возвращается на исходную частоту с точной длиной.
+ */
+class RoformerVoiceSeparator(private val context: Context) : AudioSeparator {
+    override val id = "bs_roformer_vocals"
+
+    override fun separate(input: PcmFile, workDir: File, progress: (Float) -> Unit, isCancelled: () -> Boolean): SeparationResult {
+        val model = RoformerVoiceModel(context)
+        if (!model.isAvailable()) throw java.io.IOException("Модель BS-Roformer не найдена в сборке")
+        val sr = input.sampleRate
+        val resample = sr != RoformerVoiceModel.SAMPLE_RATE
+        val in44 = if (resample) {
+            Resampler.file(input, RoformerVoiceModel.SAMPLE_RATE, File(workDir, "in44.f32"), { progress(it * 0.05f) }, isCancelled)
+        } else input
+        val voice44 = model.extractVoice(in44, File(workDir, "voice44.f32"), { progress(0.05f + it * 0.9f) }, isCancelled)
+        if (resample) in44.file.delete()
+        val voice = if (resample) {
+            Resampler.file(
+                voice44, sr, File(workDir, "speech.f32"), { progress(0.95f + it * 0.05f) }, isCancelled,
+                targetFrames = input.frames,
+            ).also { voice44.file.delete() }
+        } else voice44
+        progress(1f)
+        return SeparationResult(listOf(NamedStem("speech", voice)))
     }
 }

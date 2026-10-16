@@ -184,8 +184,11 @@ fun DialogueScreen(vm: DialogueViewModel = viewModel()) {
 
                 if (!s.running && s.resultPath == null && info.audioTracks.isNotEmpty()) {
                     Text(stringResource(R.string.dlg_mode_title), style = MaterialTheme.typography.titleSmall)
-                    val modes = if (s.banditAvailable) listOf(DialogueWorker.MODE_FAST, DialogueWorker.MODE_STANDARD, DialogueWorker.MODE_HIGH)
-                    else listOf(DialogueWorker.MODE_FAST)
+                    val modes = buildList {
+                        add(DialogueWorker.MODE_FAST)
+                        if (s.banditAvailable) { add(DialogueWorker.MODE_STANDARD); add(DialogueWorker.MODE_HIGH) }
+                        if (s.roformerAvailable) add(DialogueWorker.MODE_VOICE)
+                    }
                     ChoiceRow(
                         options = modes,
                         selected = s.mode,
@@ -194,6 +197,7 @@ fun DialogueScreen(vm: DialogueViewModel = viewModel()) {
                                 when (it) {
                                     DialogueWorker.MODE_STANDARD -> R.string.dlg_mode_standard
                                     DialogueWorker.MODE_HIGH -> R.string.dlg_mode_high
+                                    DialogueWorker.MODE_VOICE -> R.string.dlg_mode_voice
                                     else -> R.string.dlg_mode_fast
                                 }
                             )
@@ -205,6 +209,7 @@ fun DialogueScreen(vm: DialogueViewModel = viewModel()) {
                             when (s.mode) {
                                 DialogueWorker.MODE_STANDARD -> R.string.dlg_mode_standard_note
                                 DialogueWorker.MODE_HIGH -> R.string.dlg_mode_high_note
+                                DialogueWorker.MODE_VOICE -> R.string.dlg_mode_voice_note
                                 else -> R.string.dlg_mode_fast_note
                             }
                         ),
