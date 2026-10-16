@@ -1,5 +1,11 @@
 package com.oxxunov.voiceenhance.engine
 
+/** «Студийный голос» — нейросеть Sidon: шум + эхо + полный тембр до 48 кГц. */
+data class StudioVoiceSettings(
+    /** Новое подключается выключенным — чтобы можно было сравнить. */
+    val enabled: Boolean = false,
+)
+
 data class NoiseReductionSettings(
     /** Новое подключается выключенным — чтобы можно было сравнить. */
     val enabled: Boolean = false,
@@ -76,6 +82,7 @@ data class LoudnessSettings(
 )
 
 data class EnhanceSettings(
+    val studio: StudioVoiceSettings = StudioVoiceSettings(),
     val noiseReduction: NoiseReductionSettings = NoiseReductionSettings(),
     val deReverb: DeReverbSettings = DeReverbSettings(),
     val highPass: HighPassSettings = HighPassSettings(),

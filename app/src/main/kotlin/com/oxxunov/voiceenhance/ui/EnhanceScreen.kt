@@ -234,6 +234,20 @@ private fun SettingsPanel(vm: EnhanceViewModel, s: UiState) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Настройки обработки", style = MaterialTheme.typography.titleSmall)
 
+        val sv = st.studio
+        Section("Студийный голос (Sidon)", sv.enabled, { v -> vm.updateSettings { it.copy(studio = it.studio.copy(enabled = v)) } }) {
+            Text(
+                "Нейросеть восстанавливает речь «как в студии»: убирает шум и эхо комнаты и достраивает " +
+                    "полный тембр до 48 кГц. Понимает русский, таджикский и другие языки. Работает офлайн.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                "Обработка тяжёлая: минута записи может считаться несколько минут. Первый запуск дольше — " +
+                    "модель (~470 МБ) копируется в память телефона. Шумодав и De-Reverb вместе с ней обычно не нужны.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+
         val nr = st.noiseReduction
         Section("Шумоподавление (DeepFilterNet3)", nr.enabled, { v -> vm.updateSettings { it.copy(noiseReduction = it.noiseReduction.copy(enabled = v)) } }) {
             LabeledSlider(

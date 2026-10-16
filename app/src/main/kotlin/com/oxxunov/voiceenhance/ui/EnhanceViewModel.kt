@@ -26,6 +26,7 @@ import com.oxxunov.voiceenhance.engine.WavWriter
 import com.oxxunov.voiceenhance.engine.Waveform
 import com.oxxunov.voiceenhance.engine.WpeDereverb
 import com.oxxunov.voiceenhance.ml.DeepFilterDenoiser
+import com.oxxunov.voiceenhance.ml.SidonRestorer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -101,6 +102,7 @@ private data class Snapshot(
 class EnhanceViewModel(app: Application) : AndroidViewModel(app) {
     private val importer = AudioImporter(app)
     private val denoiser = DeepFilterDenoiser(app)
+    private val studio = SidonRestorer(app)
     private val presetStore = PresetStore(app)
     /** Профиль голоса текущей записи — считается один раз. */
     @Volatile private var profile: Pair<PcmFile, VoiceProfile>? = null
@@ -213,7 +215,8 @@ class EnhanceViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- пресеты ----------
 
     fun applyPreset(name: String) {
-        val s = VoicePresets.all.firstOrNull { it.name == name }?.settings
+        // встроенные пресеты про «Студийный голос» ничего не знают — переключатель остаётся как был
+        val s = VoicePresets.all.firstOrNull { it.name == name }?.settings?.copy(studio = _state.value.settings.studio)
             ?: _state.value.userPresets.firstOrNull { it.name == name }?.settings
             ?: return
         _state.update { it.copy(settings = s, activePreset = name, autoNotes = emptyList()) }
@@ -319,7 +322,7 @@ class EnhanceViewModel(app: Application) : AndroidViewModel(app) {
                     .also { profile = input to it }
             }
             val auto = AutoEnhancer.suggest(analysis, p, s.strength / 100.0)
-            runProcessing(input, auto.settings, analysis, report, auto.notes)
+            runProcessing(input, auto.settings.copy(studio = s.settings.studio), analysis, report, auto.notes)
         }
     }
 
@@ -340,16 +343,19 @@ class EnhanceViewModel(app: Application) : AndroidViewModel(app) {
         val ctx = currentCoroutineContext()
         val nr = settings.noiseReduction
         val dr = settings.deReverb
+        val st = settings.studio
         val pre = buildList<FileStage> {
+            // нейросеть Sidon лучше всего работает с исходной записью — она идёт первой
+            if (st.enabled) add(studio.stage())
             if (nr.enabled) add(denoiser.stage(nr.attenLimitDb))
             if (dr.enabled) add(WpeDereverb(dr.strength / 100.0))
         }
-        val label = when {
-            nr.enabled && dr.enabled -> "Обработка (шумодав + de-reverb + DSP)"
-            nr.enabled -> "Обработка (шумодав + DSP)"
-            dr.enabled -> "Обработка (de-reverb + DSP)"
-            else -> "Обработка"
+        val parts = buildList {
+            if (st.enabled) add("студийный голос")
+            if (nr.enabled) add("шумодав")
+            if (dr.enabled) add("de-reverb")
         }
+        val label = if (parts.isEmpty()) "Обработка" else "Обработка (${parts.joinToString(" + ")} + DSP)"
         val result = EnhancementPipeline.process(
             input, out, workDir, settings, analysis,
             { report(label, it) }, { !ctx.isActive },
