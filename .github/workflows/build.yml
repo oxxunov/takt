@@ -189,13 +189,20 @@ jobs:
       - name: Build debug APK
         run: gradle :app:assembleDebug --no-daemon --stacktrace
 
+      # APK выкладывается как есть, без ZIP-обёртки: скачивается сразу .apk, распаковывать не нужно
+      - name: Prepare APK
+        run: |
+          set -e
+          cp app/build/outputs/apk/debug/app-debug.apk VoiceEnhance.apk
+          unzip -tq VoiceEnhance.apk
+          ls -la VoiceEnhance.apk
+
       - name: Upload APK
-        if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: voice-enhance-debug
-          path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: warn
+          path: VoiceEnhance.apk
+          archive: false
+          if-no-files-found: error
 
       - name: Upload test report
         if: always()
