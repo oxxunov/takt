@@ -84,6 +84,15 @@ data class UiState(
     val loop: Boolean = false,
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
+    /** Открытая карточка «Сжать видео». */
+    val compress: CompressUi? = null,
+)
+
+data class CompressUi(
+    val uri: Uri,
+    val name: String,
+    val meta: VideoMeta? = null,
+    val level: CompressLevel = CompressLevel.BALANCE,
 )
 
 /** Состояние проекта для Undo/Redo. Файлы не удаляются, пока на них ссылается история. */
@@ -98,6 +107,8 @@ private data class Snapshot(
     val settings: EnhanceSettings,
     val autoNotes: List<String>,
 )
+
+private val MP3_RATES = setOf(8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000)
 
 class EnhanceViewModel(app: Application) : AndroidViewModel(app) {
     private val importer = AudioImporter(app)
@@ -502,6 +513,86 @@ class EnhanceViewModel(app: Application) : AndroidViewModel(app) {
             }
             val q = if (kind == ExportKind.WAV) s.exportFormat.label else "${s.exportKbps} кбит/с"
             _state.update { it.copy(message = "Сохранено: ${kind.label}, $q") }
+        }
+    }
+
+    // ---------- звук из видео → MP3 ----------
+
+    /**
+     * Достаёт звуковую дорожку из видео и сохраняет её в MP3 320 кбит/с.
+     * Текущую запись в редакторе не трогает. Частоты, которых нет в MP3, переводятся в 48 кГц,
+     * многоканальный звук (5.1 и т. п.) сводится в стерео.
+     */
+    fun extractMp3(video: Uri, target: Uri) = launchBusy("Звук из видео") { report ->
+        val ctx = currentCoroutineContext()
+        val cancelled = { !ctx.isActive }
+        val tag = System.nanoTime()
+        val decoded = File(workDir, "vid_$tag.f32")
+        val stereo = File(workDir, "vid_st_$tag.f32")
+        val resampled = File(workDir, "vid_rs_$tag.f32")
+        val mp3 = File(workDir, "vid_$tag.mp3")
+        try {
+            var pcm = importer.import(video, decoded, { report("Извлечение звука", it * 0.45f) }, cancelled)
+            if (pcm.channels > 2) pcm = AudioEdits.downmixToStereo(pcm, stereo, cancelled)
+            if (pcm.sampleRate !in MP3_RATES) {
+                pcm = com.oxxunov.voiceenhance.ml.Resampler.file(
+                    pcm, 48000, resampled, { report("Перевод в 48 кГц", 0.45f + it * 0.05f) }, cancelled,
+                )
+            }
+            Mp3Encoder.encode(pcm, mp3, 320, { report("Сохранение MP3", 0.5f + it * 0.48f) }, cancelled)
+            val os = getApplication<Application>().contentResolver.openOutputStream(target, "wt")
+                ?: throw IOException("Не удалось создать файл")
+            os.use { o -> mp3.inputStream().use { it.copyTo(o, 1 shl 16) } }
+            report("Сохранение MP3", 1f)
+            _state.update { it.copy(message = "Сохранено: MP3 320 кбит/с") }
+        } catch (e: Throwable) {
+            // недописанный файл не оставляем
+            runCatching { android.provider.DocumentsContract.deleteDocument(getApplication<Application>().contentResolver, target) }
+            throw e
+        } finally {
+            decoded.delete(); stereo.delete(); resampled.delete(); mp3.delete()
+        }
+    }
+
+    // ---------- сжатие видео ----------
+
+    fun openCompress(uri: Uri, name: String) {
+        _state.update { it.copy(compress = CompressUi(uri, name), error = null, message = null) }
+        viewModelScope.launch {
+            try {
+                val meta = withContext(Dispatchers.IO) { VideoCompressor.probe(getApplication(), uri) }
+                _state.update { s -> s.copy(compress = s.compress?.takeIf { it.uri == uri }?.copy(meta = meta)) }
+            } catch (e: Exception) {
+                _state.update { it.copy(compress = null, error = e.message ?: "Не удалось открыть видео") }
+            }
+        }
+    }
+
+    fun setCompressLevel(l: CompressLevel) = _state.update { s -> s.copy(compress = s.compress?.copy(level = l)) }
+    fun closeCompress() = _state.update { it.copy(compress = null) }
+
+    /** Сжимает выбранное видео и сохраняет MP4 в [target]. */
+    fun compressVideo(target: Uri) {
+        val c = _state.value.compress ?: return
+        val meta = c.meta ?: return
+        val bps = meta.videoBps(c.level)
+        launchBusy("Сжатие видео") { report ->
+            val app = getApplication<Application>()
+            val tmp = File(app.cacheDir, "compress_${System.nanoTime()}.mp4")
+            try {
+                VideoCompressor.compress(app, c.uri, tmp, bps) { report("Сжатие видео", it * 0.97f) }
+                report("Сохранение", 0.98f)
+                val os = app.contentResolver.openOutputStream(target, "wt") ?: throw IOException("Не удалось создать файл")
+                os.use { o -> tmp.inputStream().use { it.copyTo(o, 1 shl 20) } }
+                val mb = tmp.length() / (1024 * 1024)
+                val was = if (meta.sizeBytes > 0) " (было ${meta.sizeBytes / (1024 * 1024)} МБ)" else ""
+                _state.update { it.copy(compress = null, message = "Видео сжато: $mb МБ$was") }
+            } catch (e: Throwable) {
+                runCatching { android.provider.DocumentsContract.deleteDocument(app.contentResolver, target) }
+                throw e
+            } finally {
+                tmp.delete()
+            }
         }
     }
 

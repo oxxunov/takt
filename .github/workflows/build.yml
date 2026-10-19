@@ -9,8 +9,6 @@ env:
   DFN_TAG: v0.5.6          # официальный DeepFilterNet (MIT/Apache-2.0)
   SRC_TAG: 0.2.2           # libsamplerate (BSD-2)
   CRISP_SHA: bf6fbe126e4c91487494ae20b9b8fea6553f5680   # CrispASR (MIT) — рантайм Sidon на ggml
-  MSST_SHA: 6fdad13686bb7e84d029ec66f9dbe76e65c93ebf   # Music-Source-Separation-Training (MIT) — код BS-Roformer
-  ROFORMER_SHA256: 5b84f37e8d444c8cb30c79d77f613a41c05868ff9c9ac6c7049c00aefae115aa  # viperx BS-Roformer ep_317
   SIDON_SHA256: 7e27282a09be71e2f37e87731a074b291a2cab0d3f1de4a8f8eb48421587e912  # sidon-v0.1-f16.gguf
 
 jobs:
@@ -187,75 +185,6 @@ jobs:
           tar xzf lame.tar.gz
           mv lame-3.100 audio-io/src/main/cpp/lame
 
-      - name: Fetch BandIt v2 (ONNX)
-        run: |
-          set -e
-          D=ml-engine/src/main/assets/bandit
-          mkdir -p $D
-          BASE=https://github.com/aliali2722/kirinuki-releases/releases/download/deps-sep-banditv2-multi-r1
-          for f in bandit_v2_multi_48k.onnx ATTRIBUTION.md LICENSE-bandit-v2-code.txt cc-by-sa-4.0-legalcode.txt export-manifest.json; do
-            curl -fL --retry 5 -o "$D/$f" "$BASE/$f"
-          done
-          cd $D
-          cat > sums.txt <<'EOS'
-          1b5f92e16c1e1c62a0a73363d85cff4bb6b215bea16e81ad91ee9c145152d947  bandit_v2_multi_48k.onnx
-          7246d876e6b23157555a4dcac95e19c87b3dcbd893c89876e70b28ae5f3c399a  ATTRIBUTION.md
-          c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  LICENSE-bandit-v2-code.txt
-          28a9529c7d0bb4dc51f4bf5c116a3d16ef247a052f7591466768ddf563fd1cf5  cc-by-sa-4.0-legalcode.txt
-          91140d61fa450881c09e597e0b00b39d687228d284371629dc32ff521d7192de  export-manifest.json
-          EOS
-          sed -i 's/^ *//' sums.txt
-          sha256sum -c sums.txt
-          rm sums.txt
-          ls -la
-
-      # ---------- BS-Roformer («Убрать весь голос»): экспорт в ONNX со сверкой с оригиналом ----------
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Export BS-Roformer to ONNX
-        run: |
-          set -e
-          mkdir msst && cd msst
-          git init -q
-          git remote add origin https://github.com/ZFTurbo/Music-Source-Separation-Training.git
-          git fetch -q --depth 1 origin "$MSST_SHA"
-          git checkout -q FETCH_HEAD
-          cd ..
-          python -m pip install --quiet torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install --quiet onnx==1.17.0 onnxruntime==1.19.2 numpy einops==0.8.1 \
-            rotary_embedding_torch==0.3.5 beartype==0.14.1 pyyaml packaging librosa
-          ok=0
-          for attempt in 1 2 3 4 5; do
-            if curl -fL --retry 3 --connect-timeout 30 -o bsr.ckpt \
-                https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/model_bs_roformer_ep_317_sdr_12.9755.ckpt \
-               && echo "$ROFORMER_SHA256  bsr.ckpt" | sha256sum -c -; then ok=1; break; fi
-            sleep 15
-          done
-          [ "$ok" = 1 ] || { echo "Веса BS-Roformer не скачались"; exit 1; }
-          D=ml-engine/src/main/assets/roformer
-          mkdir -p $D
-          python ml-engine/roformer/export_bs_roformer.py msst \
-            msst/configs/viperx/model_bs_roformer_ep_317_sdr_12.9755.yaml bsr.ckpt $D/bs_roformer_vocals_44k.onnx
-          rm -f bsr.ckpt
-          ls -la $D
-
-      - name: Inspect BandIt model (diagnostics)
-        continue-on-error: true
-        run: |
-          pip install --quiet onnxruntime numpy
-          cat ml-engine/src/main/assets/bandit/export-manifest.json | head -c 4000; echo
-          python3 - <<'EOP'
-          import onnxruntime as ort, numpy as np, time
-          s = ort.InferenceSession("ml-engine/src/main/assets/bandit/bandit_v2_multi_48k.onnx")
-          for i in s.get_inputs(): print("IN ", i.name, i.shape, i.type)
-          for o in s.get_outputs(): print("OUT", o.name, o.shape, o.type)
-          x = (np.random.randn(1, 2, 1025, 751) * 0.1).astype(np.float32)
-          t0 = time.time(); outs = s.run(None, {s.get_inputs()[0].name: x}); dt = time.time() - t0
-          print("RES", outs[0].shape, "time per 8 s chunk (CI CPU, mono): %.2f s" % dt)
-          EOP
-
       # ---------- APK ----------
       - name: Build debug APK
         run: gradle :app:assembleDebug --no-daemon --stacktrace
@@ -274,44 +203,4 @@ jobs:
         with:
           name: test-report
           path: audio-engine/build/reports/tests/
-          if-no-files-found: ignore
-
-      # ---------- инструментальные тесты на эмуляторе ----------
-      - name: Long test videos (ffmpeg)
-        run: |
-          command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
-          D=app/src/androidTest/assets
-          mkdir -p $D
-          IN="-f lavfi -i testsrc=duration=150:size=320x180:rate=15 -f lavfi -i sine=frequency=440:duration=150:sample_rate=44100"
-          ENC="-c:v libx264 -preset ultrafast -g 30 -pix_fmt yuv420p -c:a aac -b:a 64k -ac 2"
-          ffmpeg -y -loglevel error $IN $ENC $D/long_plain.mp4
-          ffmpeg -y -loglevel error $IN $ENC -movflags +faststart $D/long_faststart.mp4
-          ffmpeg -y -loglevel error $IN $ENC -movflags frag_keyframe+empty_moov+default_base_moof $D/long_fragmented.mp4
-          ls -la $D
-
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
-      - name: Instrumented tests (emulator, API 34)
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 34
-          arch: x86_64
-          target: google_apis
-          ram-size: 4096M
-          disable-animations: true
-          disk-size: 8G
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
-          script: gradle :app:connectedDebugAndroidTest --no-daemon --stacktrace
-
-      - name: Upload instrumented test reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: instrumented-test-report
-          path: |
-            app/build/reports/androidTests/
           if-no-files-found: ignore

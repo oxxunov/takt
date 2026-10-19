@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "VoiceEnhance"
-include(":app", ":audio-engine", ":audio-io", ":ml-engine", ":video-engine")
+include(":app", ":audio-engine", ":audio-io", ":ml-engine")

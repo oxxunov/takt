@@ -36,6 +36,22 @@ class EditTests {
     }
 
     @Test
+    fun downmix51ToStereo() {
+        val dir = TestSignals.tempDir()
+        // L R C LFE Ls Rs: в каждом канале своя постоянная
+        val v = floatArrayOf(0.1f, 0.2f, 0.3f, 0.9f, 0.4f, 0.5f)
+        val pcm = TestSignals.toPcm(dir, "s51.f32", sr, Array(6) { c -> FloatArray(1000) { v[c] } })
+        val st = AudioEdits.downmixToStereo(pcm, File(dir, "st.f32"))
+        assertEquals(2, st.channels)
+        assertEquals(1000L, st.frames)
+        val y = TestSignals.readAll(st)
+        val k = 0.70710677f
+        val n = 1f / (1f + 2 * k)
+        assertEquals((0.1f + k * 0.3f + k * 0.4f) * n, y[0][500], 1e-5f)
+        assertEquals((0.2f + k * 0.3f + k * 0.5f) * n, y[1][500], 1e-5f)
+    }
+
+    @Test
     fun peaksCoverWholeFile() {
         val dir = TestSignals.tempDir()
         val x = TestSignals.sine(sr, 100.0, 0.7, 1.0)

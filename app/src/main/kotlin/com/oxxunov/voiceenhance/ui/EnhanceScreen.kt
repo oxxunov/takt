@@ -79,6 +79,26 @@ fun EnhanceScreen(vm: EnhanceViewModel = viewModel()) {
     val exportMp3 = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/mpeg")) { uri ->
         if (uri != null) vm.export(uri)
     }
+    // звук из видео: сначала выбор видео, затем куда сохранить MP3
+    var pendingVideo by remember { mutableStateOf<android.net.Uri?>(null) }
+    val saveVideoMp3 = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/mpeg")) { uri ->
+        val v = pendingVideo
+        pendingVideo = null
+        if (uri != null && v != null) vm.extractMp3(v, uri)
+    }
+    val pickVideo = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            pendingVideo = uri
+            saveVideoMp3.launch(displayName(context, uri).substringBeforeLast('.').ifBlank { "audio" } + ".mp3")
+        }
+    }
+    // сжатие видео: выбор видео → карточка с уровнем → куда сохранить
+    val saveCompressed = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("video/mp4")) { uri ->
+        if (uri != null) vm.compressVideo(uri)
+    }
+    val pickCompress = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.openCompress(uri, displayName(context, uri))
+    }
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) vm.openRecorder() else vm.showError("Без доступа к микрофону запись невозможна")
     }
@@ -127,6 +147,22 @@ fun EnhanceScreen(vm: EnhanceViewModel = viewModel()) {
                     enabled = !busy && !s.recorder.open,
                     modifier = Modifier.weight(1f),
                 ) { Text("📂 Импорт") }
+            }
+            OutlinedButton(
+                onClick = { pickVideo.launch(arrayOf("video/*")) },
+                enabled = !busy && !s.recorder.open,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("🎬 Звук из видео → MP3") }
+            OutlinedButton(
+                onClick = { pickCompress.launch(arrayOf("video/*")) },
+                enabled = !busy && !s.recorder.open,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("🗜 Сжать видео") }
+
+            s.compress?.let { c ->
+                CompressCard(vm, c, busy) {
+                    saveCompressed.launch(c.name.substringBeforeLast('.').ifBlank { "video" } + "_compressed.mp4")
+                }
             }
 
             if (s.recorder.open) RecorderPanel(vm, s.recorder, level)
@@ -183,6 +219,45 @@ fun EnhanceScreen(vm: EnhanceViewModel = viewModel()) {
                             Text("Сначала нажмите ✨ ENHANCE или «Обработать»", style = MaterialTheme.typography.bodySmall)
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompressCard(vm: EnhanceViewModel, c: CompressUi, busy: Boolean, onSave: () -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Сжатие видео", style = MaterialTheme.typography.titleSmall)
+            Text(c.name, style = MaterialTheme.typography.bodySmall)
+            val m = c.meta
+            if (m == null) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+            } else {
+                val min = m.durationUs / 60_000_000L
+                val sec = (m.durationUs / 1_000_000L) % 60
+                val size = if (m.sizeBytes > 0) " · ${m.sizeBytes / (1024 * 1024)} МБ" else ""
+                Text("${m.width}×${m.height} · %d:%02d$size".format(min, sec), style = MaterialTheme.typography.bodySmall)
+                ChoiceRow(CompressLevel.entries, c.level, { it.label }, { vm.setCompressLevel(it) }, enabled = !busy)
+                val est = m.estimate(c.level) / (1024 * 1024)
+                Text("${c.level.note}. Примерно $est МБ", style = MaterialTheme.typography.bodySmall)
+                val bigger = m.sizeBytes > 0 && m.estimate(c.level) >= m.sizeBytes * 0.95
+                if (bigger) {
+                    Text(
+                        "Видео уже сжато сильнее: файл не станет меньше. Выберите уровень ниже.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Text(
+                    "Кодек H.265 — при том же качестве файл вдвое меньше, чем в H.264. Разрешение, частота кадров " +
+                        "и звук не меняются. Длинное видео сжимается долго: примерно как его длительность или дольше.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onSave, enabled = !busy && !bigger, modifier = Modifier.weight(1f)) { Text("💾 Сжать и сохранить") }
+                    OutlinedButton(onClick = { vm.closeCompress() }, enabled = !busy) { Text("Закрыть") }
                 }
             }
         }

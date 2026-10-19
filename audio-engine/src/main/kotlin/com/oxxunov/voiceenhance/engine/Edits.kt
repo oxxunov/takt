@@ -104,4 +104,48 @@ object AudioEdits {
         }
         return PcmFile(out, pcm.sampleRate, pcm.channels)
     }
+
+    /**
+     * Сведение многоканального звука в стерео.
+     * 5.1 (порядок Android: L R C LFE Ls Rs) и 7.1 — по ITU-R BS.775: центр и тылы с весом −3 дБ, LFE не берётся.
+     * Другие раскладки: чётные каналы — влево, нечётные — вправо.
+     * Результат нормируется так, чтобы сумма весов не давала перегруза.
+     */
+    fun downmixToStereo(pcm: PcmFile, out: File, isCancelled: () -> Boolean = { false }): PcmFile {
+        val ch = pcm.channels
+        require(ch > 2) { "Уже моно или стерео" }
+        val k = 0.70710677f
+        val wl = FloatArray(ch)
+        val wr = FloatArray(ch)
+        when (ch) {
+            6 -> { wl[0] = 1f; wr[1] = 1f; wl[2] = k; wr[2] = k; wl[4] = k; wr[5] = k }
+            8 -> { wl[0] = 1f; wr[1] = 1f; wl[2] = k; wr[2] = k; wl[4] = k; wr[5] = k; wl[6] = k; wr[7] = k }
+            else -> for (c in 0 until ch) if (c % 2 == 0) wl[c] = 1f else wr[c] = 1f
+        }
+        val norm = 1f / maxOf(wl.sum(), wr.sum())
+        for (c in 0 until ch) { wl[c] *= norm; wr[c] *= norm }
+        val buf = Array(ch) { FloatArray(BLOCK) }
+        val st = Array(2) { FloatArray(BLOCK) }
+        PcmReader(pcm).use { r ->
+            PcmWriter(out, pcm.sampleRate, 2).use { w ->
+                while (true) {
+                    if (isCancelled()) throw ProcessingCancelledException()
+                    val n = r.read(buf, BLOCK)
+                    if (n <= 0) break
+                    for (i in 0 until n) {
+                        var l = 0f
+                        var rr = 0f
+                        for (c in 0 until ch) {
+                            l += buf[c][i] * wl[c]
+                            rr += buf[c][i] * wr[c]
+                        }
+                        st[0][i] = l
+                        st[1][i] = rr
+                    }
+                    w.write(st, 0, n)
+                }
+            }
+        }
+        return PcmFile(out, pcm.sampleRate, 2)
+    }
 }
