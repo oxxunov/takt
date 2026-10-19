@@ -83,7 +83,14 @@ class AudioImporter(private val context: Context) {
             extractor.selectTrack(track)
             val format = extractor.getTrackFormat(track)
             val mime = format.getString(MediaFormat.KEY_MIME)!!
-            val durationUs = if (format.containsKey(MediaFormat.KEY_DURATION)) format.getLong(MediaFormat.KEY_DURATION) else knownDurationUs
+            // У разборщика ExoPlayer в формате дорожки нет длительности — без неё прогресс стоял на 0 %.
+            // Берём из дорожки, из переданной, а если нет нигде — из заголовка файла.
+            val durationUs = when {
+                format.containsKey(MediaFormat.KEY_DURATION) && format.getLong(MediaFormat.KEY_DURATION) > 0 ->
+                    format.getLong(MediaFormat.KEY_DURATION)
+                knownDurationUs > 0 -> knownDurationUs
+                else -> headerDurationUs(uri)
+            }
 
             val c = MediaCodec.createDecoderByType(mime)
             codec = c
@@ -98,6 +105,8 @@ class AudioImporter(private val context: Context) {
             var outputDone = false
             var conv = FloatArray(0)
             var firstPts = Long.MIN_VALUE
+            // защита от зависания: если декодер долго ничего не выдаёт — понятная ошибка вместо вечных 0 %
+            var lastActivity = System.nanoTime()
 
             fun readOutputFormat(of: MediaFormat) {
                 inChannels = of.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
@@ -108,6 +117,9 @@ class AudioImporter(private val context: Context) {
 
             while (!outputDone) {
                 if (isCancelled()) throw ProcessingCancelledException()
+                if (System.nanoTime() - lastActivity > STALL_NS) {
+                    throw IOException("Декодер не отвечает — файл повреждён или формат звука не поддерживается телефоном")
+                }
                 if (!inputDone) {
                     val i = c.dequeueInputBuffer(10_000)
                     if (i >= 0) {
@@ -119,6 +131,7 @@ class AudioImporter(private val context: Context) {
                         } else {
                             c.queueInputBuffer(i, 0, n, extractor.sampleTime, 0)
                             extractor.advance()
+                            lastActivity = System.nanoTime()
                         }
                     }
                 }
@@ -126,6 +139,7 @@ class AudioImporter(private val context: Context) {
                 if (o == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                     readOutputFormat(c.outputFormat)
                 } else if (o >= 0) {
+                    lastActivity = System.nanoTime()
                     if (firstPts == Long.MIN_VALUE && info.size > 0) firstPts = info.presentationTimeUs
                     if (writer == null) {
                         readOutputFormat(c.outputFormat)
@@ -160,7 +174,10 @@ class AudioImporter(private val context: Context) {
                             }
                             w.writeInterleaved(conv, frames)
                         }
-                        if (durationUs > 0) progress((info.presentationTimeUs.toDouble() / durationUs).toFloat().coerceIn(0f, 1f))
+                        if (durationUs > 0) {
+                            val t = info.presentationTimeUs - (if (firstPts == Long.MIN_VALUE) 0L else firstPts)
+                            progress((t.toDouble() / durationUs).toFloat().coerceIn(0f, 0.99f))
+                        }
                     }
                     c.releaseOutputBuffer(o, false)
                     if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outputDone = true
@@ -181,5 +198,24 @@ class AudioImporter(private val context: Context) {
             codec?.release()
             extractor.close()
         }
+    }
+
+    /** Длительность из заголовка файла (системное чтение метаданных), мкс; -1 если неизвестна. */
+    private fun headerDurationUs(uri: Uri): Long = try {
+        val r = android.media.MediaMetadataRetriever()
+        try {
+            r.setDataSource(context, uri)
+            (r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: -1L)
+                .let { if (it > 0) it * 1000L else -1L }
+        } finally {
+            r.release()
+        }
+    } catch (_: Exception) {
+        -1L
+    }
+
+    private companion object {
+        /** 60 с без единого блока звука от декодера считаются зависанием. */
+        const val STALL_NS = 60_000_000_000L
     }
 }
