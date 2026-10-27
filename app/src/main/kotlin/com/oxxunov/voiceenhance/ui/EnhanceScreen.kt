@@ -309,6 +309,24 @@ private fun SettingsPanel(vm: EnhanceViewModel, s: UiState) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Настройки обработки", style = MaterialTheme.typography.titleSmall)
 
+        val uv = st.universal
+        Section("Универсальная очистка (NVIDIA RE-USE)", uv.enabled, { v ->
+            vm.updateSettings { it.copy(universal = it.universal.copy(enabled = v)) }
+        }) {
+            Text(
+                "Новая модель NVIDIA: одна убирает шум, эхо, «плохой микрофон» и последствия перегруза. " +
+                    "Работает офлайн. Обучена на английском, немецком, испанском, французском и китайском — " +
+                    "на русском и таджикском сравните с шумодавом на слух.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (!vm.universalAvailable) {
+                Text("В этой сборке модели нет — она не прошла проверку при сборке.", color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall)
+            } else {
+                Text("С ней шумодав и De-Reverb обычно не нужны.", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
         val sv = st.studio
         Section("Студийный голос (Sidon)", sv.enabled, { v -> vm.updateSettings { it.copy(studio = it.studio.copy(enabled = v)) } }) {
             Text(

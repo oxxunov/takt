@@ -1,5 +1,11 @@
 package com.oxxunov.voiceenhance.engine
 
+/** «Универсальная очистка» — NVIDIA RE-USE: шум, эхо, плохой микрофон, клиппинг. */
+data class UniversalCleanSettings(
+    /** Новое подключается выключенным — чтобы можно было сравнить. */
+    val enabled: Boolean = false,
+)
+
 /** «Студийный голос» — нейросеть Sidon: шум + эхо + полный тембр до 48 кГц. */
 data class StudioVoiceSettings(
     /** Новое подключается выключенным — чтобы можно было сравнить. */
@@ -82,6 +88,7 @@ data class LoudnessSettings(
 )
 
 data class EnhanceSettings(
+    val universal: UniversalCleanSettings = UniversalCleanSettings(),
     val studio: StudioVoiceSettings = StudioVoiceSettings(),
     val noiseReduction: NoiseReductionSettings = NoiseReductionSettings(),
     val deReverb: DeReverbSettings = DeReverbSettings(),

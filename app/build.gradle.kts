@@ -21,7 +21,7 @@ android {
 
     androidResources {
         // модели копируются из APK на диск — без сжатия это быстрее
-        noCompress += listOf("tgz", "gguf")
+        noCompress += listOf("tgz", "gguf", "onnx")
     }
 
     buildTypes {
@@ -48,6 +48,9 @@ dependencies {
     // Media3 Transformer (Google, Apache-2.0) — сжатие видео аппаратным кодером
     implementation("androidx.media3:media3-transformer:1.5.1")
     implementation("androidx.media3:media3-common:1.5.1")
+    // плеер видео в «Заглушке голоса»
+    implementation("androidx.media3:media3-exoplayer:1.5.1")
+    implementation("androidx.media3:media3-ui:1.5.1")
 
     val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
     implementation(composeBom)

@@ -13,6 +13,7 @@ import com.oxxunov.voiceenhance.engine.LoudnessSettings
 import com.oxxunov.voiceenhance.engine.LoudnessTarget
 import com.oxxunov.voiceenhance.engine.NoiseReductionSettings
 import com.oxxunov.voiceenhance.engine.StudioVoiceSettings
+import com.oxxunov.voiceenhance.engine.UniversalCleanSettings
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -45,6 +46,7 @@ class PresetStore(context: Context) {
 
     companion object {
         fun toJson(s: EnhanceSettings): JSONObject = JSONObject()
+            .put("universal", JSONObject().put("on", s.universal.enabled))
             .put("studio", JSONObject().put("on", s.studio.enabled))
             .put("nr", JSONObject().put("on", s.noiseReduction.enabled).put("atten", s.noiseReduction.attenLimitDb))
             .put("dr", JSONObject().put("on", s.deReverb.enabled).put("strength", s.deReverb.strength))
@@ -71,6 +73,7 @@ class PresetStore(context: Context) {
 
         fun fromJson(o: JSONObject): EnhanceSettings {
             val d = EnhanceSettings()
+            val uv = o.optJSONObject("universal")
             val sv = o.optJSONObject("studio")
             val nr = o.optJSONObject("nr")
             val dr = o.optJSONObject("dr")
@@ -81,6 +84,7 @@ class PresetStore(context: Context) {
             val l = o.optJSONObject("lim")
             val ld = o.optJSONObject("loud")
             return EnhanceSettings(
+                universal = if (uv == null) d.universal else UniversalCleanSettings(uv.optBoolean("on", false)),
                 studio = if (sv == null) d.studio else StudioVoiceSettings(sv.optBoolean("on", false)),
                 noiseReduction = if (nr == null) d.noiseReduction else NoiseReductionSettings(
                     nr.optBoolean("on", false), nr.optDouble("atten", 100.0)

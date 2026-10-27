@@ -27,6 +27,7 @@ import com.oxxunov.voiceenhance.engine.Waveform
 import com.oxxunov.voiceenhance.engine.WpeDereverb
 import com.oxxunov.voiceenhance.ml.DeepFilterDenoiser
 import com.oxxunov.voiceenhance.ml.SidonRestorer
+import com.oxxunov.voiceenhance.ml.ReuseEnhancer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -114,6 +115,8 @@ class EnhanceViewModel(app: Application) : AndroidViewModel(app) {
     private val importer = AudioImporter(app)
     private val denoiser = DeepFilterDenoiser(app)
     private val studio = SidonRestorer(app)
+    private val universal = ReuseEnhancer(app)
+    val universalAvailable: Boolean = universal.isAvailable()
     private val presetStore = PresetStore(app)
     /** Профиль голоса текущей записи — считается один раз. */
     @Volatile private var profile: Pair<PcmFile, VoiceProfile>? = null
@@ -227,7 +230,8 @@ class EnhanceViewModel(app: Application) : AndroidViewModel(app) {
 
     fun applyPreset(name: String) {
         // встроенные пресеты про «Студийный голос» ничего не знают — переключатель остаётся как был
-        val s = VoicePresets.all.firstOrNull { it.name == name }?.settings?.copy(studio = _state.value.settings.studio)
+        val s = VoicePresets.all.firstOrNull { it.name == name }?.settings
+            ?.copy(studio = _state.value.settings.studio, universal = _state.value.settings.universal)
             ?: _state.value.userPresets.firstOrNull { it.name == name }?.settings
             ?: return
         _state.update { it.copy(settings = s, activePreset = name, autoNotes = emptyList()) }
@@ -333,7 +337,7 @@ class EnhanceViewModel(app: Application) : AndroidViewModel(app) {
                     .also { profile = input to it }
             }
             val auto = AutoEnhancer.suggest(analysis, p, s.strength / 100.0)
-            runProcessing(input, auto.settings.copy(studio = s.settings.studio), analysis, report, auto.notes)
+            runProcessing(input, auto.settings.copy(studio = s.settings.studio, universal = s.settings.universal), analysis, report, auto.notes)
         }
     }
 
@@ -356,12 +360,14 @@ class EnhanceViewModel(app: Application) : AndroidViewModel(app) {
         val dr = settings.deReverb
         val st = settings.studio
         val pre = buildList<FileStage> {
-            // нейросеть Sidon лучше всего работает с исходной записью — она идёт первой
+            // нейросети лучше всего работают с исходной записью — они идут первыми
+            if (settings.universal.enabled) add(universal.stage())
             if (st.enabled) add(studio.stage())
             if (nr.enabled) add(denoiser.stage(nr.attenLimitDb))
             if (dr.enabled) add(WpeDereverb(dr.strength / 100.0))
         }
         val parts = buildList {
+            if (settings.universal.enabled) add("очистка RE-USE")
             if (st.enabled) add("студийный голос")
             if (nr.enabled) add("шумодав")
             if (dr.enabled) add("de-reverb")

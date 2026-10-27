@@ -36,4 +36,6 @@ android {
 dependencies {
     api(project(":audio-engine"))
     implementation("com.github.wendykierp:JTransforms:3.1")
+    // ONNX Runtime (MIT) — движок для NVIDIA RE-USE
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.19.2")
 }

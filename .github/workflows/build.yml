@@ -9,6 +9,7 @@ env:
   DFN_TAG: v0.5.6          # официальный DeepFilterNet (MIT/Apache-2.0)
   SRC_TAG: 0.2.2           # libsamplerate (BSD-2)
   CRISP_SHA: bf6fbe126e4c91487494ae20b9b8fea6553f5680   # CrispASR (MIT) — рантайм Sidon на ggml
+  MSST_SHA: 6fdad13686bb7e84d029ec66f9dbe76e65c93ebf   # Music-Source-Separation-Training (MIT) — код Roformer
   SIDON_SHA256: 7e27282a09be71e2f37e87731a074b291a2cab0d3f1de4a8f8eb48421587e912  # sidon-v0.1-f16.gguf
 
 jobs:
@@ -162,6 +163,79 @@ jobs:
           build arm64-v8a vesidon_v82 armv8.2-a+fp16+dotprod
           build x86_64 vesidon ""
           ls -la ml-engine/src/main/jniLibs/*/
+
+      # ---------- NVIDIA RE-USE («Универсальная очистка»): экспорт в ONNX со проверками ----------
+      # Не обязательный шаг: если экспорт или проверка качества не пройдут, APK соберётся без модели.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Export NVIDIA RE-USE to ONNX
+        id: reuse
+        continue-on-error: true
+        run: |
+          set -e
+          python -m pip install --quiet torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install --quiet onnx==1.17.0 onnxruntime==1.19.2 numpy scipy einops safetensors librosa soundfile huggingface_hub
+          python - <<'EOP'
+          from huggingface_hub import snapshot_download
+          snapshot_download("nvidia/NVIDIA-NemotronLabs-RE-USE", local_dir="reuse_repo",
+                            allow_patterns=["*.py", "*.json", "*.safetensors", "models/*", "utils/*", "LICENSE"])
+          EOP
+          ls -la reuse_repo reuse_repo/models
+          D=ml-engine/src/main/assets/reuse
+          mkdir -p $D
+          python ml-engine/reuse/export_reuse.py reuse_repo crisp/samples/jfk.wav $D/reuse.onnx $D/reuse.json
+          cp reuse_repo/LICENSE $D/LICENSE.txt || true
+          ls -la $D
+
+      - name: RE-USE not included (warning)
+        if: steps.reuse.outcome != 'success'
+        run: |
+          rm -rf ml-engine/src/main/assets/reuse
+          echo "::warning::NVIDIA RE-USE не прошёл экспорт или проверку — APK собирается без него. Смотрите лог шага Export NVIDIA RE-USE."
+
+      # ---------- becruily Mel-Roformer «Deux» (заглушка голоса): экспорт в ONNX с проверками ----------
+      - name: Export Mel-Roformer Deux to ONNX
+        id: deux
+        continue-on-error: true
+        run: |
+          set -e
+          python -m pip install --quiet torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install --quiet onnx==1.17.0 onnxruntime==1.19.2 numpy scipy safetensors librosa huggingface_hub pyyaml beartype==0.14.1 rotary_embedding_torch==0.3.5 einops==0.8.1 packaging
+          if [ ! -d msst ]; then
+            mkdir msst && cd msst
+            git init -q
+            git remote add origin https://github.com/ZFTurbo/Music-Source-Separation-Training.git
+            git fetch -q --depth 1 origin "$MSST_SHA"
+            git checkout -q FETCH_HEAD
+            cd ..
+          fi
+          python - <<'EOP'
+          from huggingface_hub import list_repo_files, hf_hub_download
+          repo = "becruily/mel-band-roformer-deux"
+          files = list_repo_files(repo)
+          print(files)
+          ck = [f for f in files if f.endswith((".ckpt", ".pth", ".safetensors"))]
+          cf = [f for f in files if f.endswith((".yaml", ".yml"))]
+          assert ck and cf, "нет весов или конфига"
+          import shutil
+          shutil.copy(hf_hub_download(repo, ck[0]), "deux" + ck[0][ck[0].rfind("."):])
+          shutil.copy(hf_hub_download(repo, cf[0]), "deux.yaml")
+          open("deux_ckpt_name", "w").write("deux" + ck[0][ck[0].rfind("."):])
+          EOP
+          D=ml-engine/src/main/assets/deux
+          mkdir -p $D
+          python ml-engine/roformer/export_roformer_bg.py msst deux.yaml "$(cat deux_ckpt_name)" crisp/samples/jfk.wav $D/deux_bg.onnx $D/deux.json
+          printf 'becruily/mel-band-roformer-deux — CC BY-NC 4.0 (только некоммерческое использование). https://huggingface.co/becruily/mel-band-roformer-deux\nКод модели: Music-Source-Separation-Training (MIT).\n' > $D/ATTRIBUTION.txt
+          rm -f deux.ckpt deux.pth deux.safetensors
+          ls -la $D
+
+      - name: Deux not included (warning)
+        if: steps.deux.outcome != 'success'
+        run: |
+          rm -rf ml-engine/src/main/assets/deux
+          echo "::warning::Mel-Roformer Deux не прошёл экспорт или проверку — APK собирается без удаления голоса в «Заглушке». Смотрите лог шага Export Mel-Roformer Deux."
 
       - name: Fetch LAME 3.100 (MP3)
         run: |
