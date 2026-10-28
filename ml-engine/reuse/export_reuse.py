@@ -232,11 +232,11 @@ noise = np.cumsum(rng.standard_normal(L)).astype(np.float32)          # «гул
 noise = noise - np.convolve(noise, np.ones(64) / 64, mode="same")
 noise += 0.5 * rng.standard_normal(L).astype(np.float32)               # «шипение»
 noise *= np.sqrt((clean @ clean) / (noise @ noise)) * 10 ** (-5 / 20)  # SNR 5 дБ
-noisy = clean + noise
+noisy = (clean + noise).astype(np.float32)
 norm = 1.0  # inference.py громкость не меняет; модель зависит от уровня (log1p) — подаём как есть
 
 w = Wrapped(model).eval()
-x = torch.from_numpy(noisy * norm)[None]
+x = torch.from_numpy((noisy * norm).astype(np.float32))[None]
 
 t0 = time.time()
 ref = reference(model, x)[0].numpy() / norm
