@@ -63,7 +63,10 @@ for m in model.modules():
 assert model.stereo, "нужна стерео-модель"
 
 SR = int(cfg.get("audio", {}).get("sample_rate", mcfg.get("sample_rate", 44100)))
-L = int(cfg["audio"]["chunk_size"])
+# Кусок для телефона: обучали на chunk_size (у Deux 13 с), но внимание по времени растёт как квадрат длины —
+# 13 с не помещаются в память ни телефона, ни сборщика. Модель работает на любой длине; берём 5 с,
+# стыки кусков приложение сглаживает перекрытием.
+L = min(int(cfg["audio"]["chunk_size"]), int(float(os.environ.get("ROFORMER_CHUNK_S", "5")) * SR))
 N = mcfg.get("stft_n_fft", 2048)
 HOP = mcfg.get("stft_hop_length", 512)
 WIN = mcfg.get("stft_win_length", 2048)
@@ -214,9 +217,13 @@ before, after = si_sdr(mono_mix, music), si_sdr(bg, music)
 print(f"Голос убирается: SI-SDR фона {before:.1f} дБ → {after:.1f} дБ")
 assert after > before + 6, "модель не убирает голос — что-то собрано неправильно"
 
+del orig, ref, state
+import gc  # noqa: E402
+gc.collect()
 t0 = time.time()
+# без свёртки констант при экспорте: она копирует веса и съедает память сборщика; ONNX Runtime делает её сам при загрузке
 torch.onnx.export(w, (x,), OUT, input_names=["mix"], output_names=["bg"], opset_version=17,
-                  do_constant_folding=True, dynamo=False)
+                  do_constant_folding=False, dynamo=False)
 print(f"ONNX сохранён за {time.time() - t0:.0f} с, {os.path.getsize(OUT) / 1e6:.0f} МБ")
 
 import onnxruntime as ort  # noqa: E402

@@ -21,8 +21,8 @@ import kotlin.math.sqrt
  * «Универсальная очистка» — NVIDIA NemotronLabs RE-USE (OpenMDW-1.1), ONNX Runtime на CPU.
  * Одна модель убирает шум, эхо, «плохой микрофон», последствия клиппинга.
  *
- * Путь звука (каждый канал отдельно): частота модели (libsamplerate) → нормализация громкости
- * как в inference.py → куски по 4 с с перекрытием 0,5 с (sin²) → обратно в частоту исходника.
+ * Путь звука (каждый канал отдельно): частота модели (libsamplerate) → (громкость не меняется,
+ * как в inference.py) → куски модели с перекрытием до 0,5 с (sin²) → обратно в частоту исходника.
  * Длительность сохраняется точно.
  */
 class ReuseEnhancer(private val context: Context) {
@@ -53,11 +53,12 @@ class ReuseEnhancer(private val context: Context) {
         return dst.absolutePath
     }
 
-    private class Meta(val sampleRate: Int, val chunk: Int)
+    /** [normalize] — выравнивать громкость перед моделью (у RE-USE нет: модель зависит от уровня). */
+    private class Meta(val sampleRate: Int, val chunk: Int, val normalize: Boolean)
 
     private fun meta(): Meta {
         val o = JSONObject(context.assets.open("$DIR/$META").bufferedReader().use { it.readText() })
-        return Meta(o.getInt("sample_rate"), o.getInt("chunk"))
+        return Meta(o.getInt("sample_rate"), o.getInt("chunk"), o.optBoolean("normalize", true))
     }
 
     fun stage(): FileStage = FileStage { input, output, progress, isCancelled ->
@@ -138,7 +139,9 @@ class ReuseEnhancer(private val context: Context) {
                 for (c in 0 until ch) for (i in 0 until k) energy[c] += buf[c][i].toDouble() * buf[c][i]
             }
         }
-        val norm = FloatArray(ch) { c -> if (energy[c] > 1e-12) sqrt(total / energy[c]).toFloat() else 0f }
+        val norm = FloatArray(ch) { c ->
+            if (energy[c] <= 1e-12) 0f else if (m.normalize) sqrt(total / energy[c]).toFloat() else 1f
+        }
 
         val overlap = (OVERLAP_S * m.sampleRate).toInt().coerceAtMost(chunk / 4)
         val hop = chunk - overlap

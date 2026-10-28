@@ -50,12 +50,45 @@ def find(o, key):
     return None
 
 
-SR = int(find(cfg, "sampling_rate") or 48000)
-N_FFT = int(find(cfg, "n_fft"))
-HOP = int(find(cfg, "hop_size") or find(cfg, "hop_length"))
-WIN = int(find(cfg, "win_size") or find(cfg, "win_length") or N_FFT)
-COMP = float(find(cfg, "compress_factor") or 1.0)
-print(f"STFT: sr={SR} n_fft={N_FFT} hop={HOP} win={WIN} compress={COMP}")
+BASE_SR = int(find(cfg, "sampling_rate") or 48000)
+BASE_N_FFT = int(find(cfg, "n_fft"))
+BASE_HOP = int(find(cfg, "hop_size") or find(cfg, "hop_length"))
+BASE_WIN = int(find(cfg, "win_size") or find(cfg, "win_length") or BASE_N_FFT)
+COMP_RAW = find(cfg, "compress_factor")
+if COMP_RAW is None:
+    COMP_RAW = 1.0
+SFI = bool(find(cfg, "sfi"))
+
+
+def make_even(v):  # как в inference.py
+    v = int(round(v))
+    return v if v % 2 == 0 else v + 1
+
+
+# Модель не зависит от частоты (sfi): STFT масштабируется под частоту звука, как в inference.py.
+# Работаем на 48 кГц — полная полоса голоса.
+SR = int(os.environ.get("REUSE_SR", "48000")) if SFI else BASE_SR
+N_FFT = make_even(BASE_N_FFT * SR // BASE_SR)
+HOP = make_even(BASE_HOP * SR // BASE_SR)
+WIN = make_even(BASE_WIN * SR // BASE_SR)
+print(f"STFT: базовая частота {BASE_SR}, sfi={SFI}; работаем на sr={SR}: n_fft={N_FFT} hop={HOP} win={WIN}, сжатие={COMP_RAW!r}")
+
+# сжатие амплитуды: число (степень) или строковый режим (relu_log1p)
+if isinstance(COMP_RAW, str):
+    assert COMP_RAW == "relu_log1p", f"неизвестный режим сжатия {COMP_RAW}"
+    def compress(m):
+        return torch.log1p(m)
+
+    def decompress(a):
+        return torch.expm1(torch.relu(a))
+else:
+    COMP = float(COMP_RAW)
+
+    def compress(m):
+        return torch.pow(m + 1e-12, COMP) * (m > 0).float()
+
+    def decompress(a):
+        return torch.pow(a.clamp(min=0) + 1e-12, 1.0 / COMP)
 
 gen_mod = None
 for f in sorted(os.listdir(os.path.join(REPO, "models"))):
@@ -81,7 +114,7 @@ assert not missing and not unexpected, f"missing={missing[:8]} unexpected={unexp
 print("Параметров:", sum(p.numel() for p in model.parameters()))
 
 # ---------------- STFT / iSTFT как в models/stfts.py, но свёртками ----------------
-CHUNK_S = 4
+CHUNK_S = int(os.environ.get("REUSE_CHUNK_S", "2"))
 L = CHUNK_S * SR
 PAD = N_FFT // 2
 BINS = N_FFT // 2 + 1
@@ -125,25 +158,49 @@ class Wrapped(torch.nn.Module):
         re, im = spec[:, :BINS], spec[:, BINS:]
         mag = torch.sqrt(re * re + im * im)
         pha = torch.atan2(im, re)
-        silent = ((mag == 0).float().mean(dim=1, keepdim=True) > 0.5).float()  # «кадры-пустышки»
-        mag_c = torch.pow(mag + 1e-12, COMP) * (mag > 0).float()
-        mag_g, pha_g, _ = self.m(mag_c, pha)
-        mag_g = torch.pow(mag_g.clamp(min=0) + 1e-12, 1.0 / COMP) * (1 - silent)
+        mag_g, pha_g, _ = self.m(compress(mag), pha)
+        mag_g = decompress(mag_g)
+        silent = ((mag_g == 0).float().mean(dim=1, keepdim=True) > 0.5).float()  # «кадры-пустышки», как в inference.py
+        mag_g = mag_g * (1 - silent)
         yr = mag_g * torch.cos(pha_g)
         yi = mag_g * torch.sin(pha_g)
         y = F.conv_transpose1d(torch.cat([yr, yi], 1), self.inv, stride=HOP)
         return (y[:, 0, PAD:PAD + L] / self.env).reshape(1, L)
 
 
+from models.stfts import mag_phase_stft, mag_phase_istft  # noqa: E402  — функции самой модели
+
+
 def reference(m, wav):
-    """Ровно как inference.py: torch.stft → модель → torch.istft."""
+    """Ровно как inference.py: mag_phase_stft → модель → обнуление пустых кадров → mag_phase_istft."""
+    mag, pha, _ = mag_phase_stft(wav, n_fft=N_FFT, hop_size=HOP, win_size=WIN, compress_factor=COMP_RAW,
+                                 center=True, addeps=False)
+    amp_g, pha_g, _ = m(mag, pha)
+    dm = torch.expm1(torch.relu(amp_g)) if isinstance(COMP_RAW, str) else decompress(amp_g)
+    zero_portion = torch.sum(dm == 0, 1) / dm.shape[1]
+    amp_g = amp_g.clone()
+    amp_g[:, :, (zero_portion > 0.5)[0]] = 0
+    y = mag_phase_istft(amp_g, pha_g, N_FFT, HOP, WIN, COMP_RAW)
+    y = y[..., :L]
+    if y.shape[-1] < L:
+        y = F.pad(y, (0, L - y.shape[-1]), value=1e-8)
+    return y
+
+
+def check_compress():
+    """Наше сжатие должно совпасть со сжатием модели (проверка на случайном сигнале)."""
+    x = torch.randn(1, L) * 0.1
+    ref_mag, _, _ = mag_phase_stft(x, n_fft=N_FFT, hop_size=HOP, win_size=WIN, compress_factor=COMP_RAW,
+                                   center=True, addeps=False)
     w = torch.hann_window(WIN)
-    s = torch.stft(wav, N_FFT, HOP, WIN, w, center=True, pad_mode="reflect", normalized=False, return_complex=True)
-    mag, pha = torch.abs(s), torch.angle(s)
-    mag = torch.pow(mag, COMP)
-    mg, pg, _ = m(mag, pha)
-    mg = torch.pow(mg, 1.0 / COMP)
-    return torch.istft(torch.complex(mg * torch.cos(pg), mg * torch.sin(pg)), N_FFT, HOP, WIN, w, center=True, length=L)
+    s = torch.stft(x, N_FFT, HOP, WIN, w, center=True, pad_mode="reflect", normalized=False, return_complex=True)
+    mine = compress(torch.abs(s))
+    d = 10 * torch.log10((ref_mag ** 2).sum() / ((ref_mag - mine) ** 2).sum().clamp(min=1e-20)).item()
+    print(f"Сжатие амплитуды vs модель: {d:.1f} дБ")
+    assert d > 60, "сжатие амплитуды не совпало с моделью"
+
+
+check_compress()
 
 
 def load_wav(path):
@@ -176,7 +233,7 @@ noise = noise - np.convolve(noise, np.ones(64) / 64, mode="same")
 noise += 0.5 * rng.standard_normal(L).astype(np.float32)               # «шипение»
 noise *= np.sqrt((clean @ clean) / (noise @ noise)) * 10 ** (-5 / 20)  # SNR 5 дБ
 noisy = clean + noise
-norm = math.sqrt(L / float(noisy @ noisy))                             # как в inference.py
+norm = 1.0  # inference.py громкость не меняет; модель зависит от уровня (log1p) — подаём как есть
 
 w = Wrapped(model).eval()
 x = torch.from_numpy(noisy * norm)[None]
@@ -207,6 +264,6 @@ dt = time.time() - t0
 d2 = 10 * np.log10((mine @ mine) / (((out - mine) @ (out - mine)) + 1e-20))
 print(f"ONNX Runtime vs PyTorch: {d2:.1f} дБ; {CHUNK_S} с звука за {dt:.1f} с на CPU CI")
 assert d2 > 40, "ONNX не совпал с PyTorch"
-json.dump({"sample_rate": SR, "chunk": L, "n_fft": N_FFT, "hop": HOP, "win": WIN, "compress": COMP,
+json.dump({"sample_rate": SR, "chunk": L, "n_fft": N_FFT, "hop": HOP, "win": WIN, "compress": str(COMP_RAW), "normalize": False,
            "si_sdr_before": round(before, 2), "si_sdr_after": round(after, 2)}, open(META, "w"))
 print("OK")

@@ -166,6 +166,19 @@ jobs:
 
       # ---------- NVIDIA RE-USE («Универсальная очистка»): экспорт в ONNX со проверками ----------
       # Не обязательный шаг: если экспорт или проверка качества не пройдут, APK соберётся без модели.
+      # Экспорт больших моделей требует много памяти: подкачка на свободном диске /mnt,
+      # чтобы сборщик не «умирал» (иначе прерывается вся сборка, а не только шаг модели).
+      - name: Add swap for model export
+        continue-on-error: true
+        run: |
+          free -h; df -h / /mnt || true
+          sudo swapoff -a || true
+          sudo fallocate -l 20G /mnt/swapfile || sudo dd if=/dev/zero of=/mnt/swapfile bs=1M count=20480
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -173,6 +186,7 @@ jobs:
       - name: Export NVIDIA RE-USE to ONNX
         id: reuse
         continue-on-error: true
+        timeout-minutes: 45
         run: |
           set -e
           python -m pip install --quiet torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu
@@ -185,7 +199,7 @@ jobs:
           ls -la reuse_repo reuse_repo/models
           D=ml-engine/src/main/assets/reuse
           mkdir -p $D
-          python ml-engine/reuse/export_reuse.py reuse_repo crisp/samples/jfk.wav $D/reuse.onnx $D/reuse.json
+          python -u ml-engine/reuse/export_reuse.py reuse_repo crisp/samples/jfk.wav $D/reuse.onnx $D/reuse.json
           cp reuse_repo/LICENSE $D/LICENSE.txt || true
           ls -la $D
 
@@ -199,6 +213,7 @@ jobs:
       - name: Export Mel-Roformer Deux to ONNX
         id: deux
         continue-on-error: true
+        timeout-minutes: 60
         run: |
           set -e
           python -m pip install --quiet torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
@@ -218,6 +233,7 @@ jobs:
           print(files)
           ck = [f for f in files if f.endswith((".ckpt", ".pth", ".safetensors"))]
           cf = [f for f in files if f.endswith((".yaml", ".yml"))]
+          cf.sort(key=lambda f: "deux" not in f.lower())  # свой конфиг модели — первым
           assert ck and cf, "нет весов или конфига"
           import shutil
           shutil.copy(hf_hub_download(repo, ck[0]), "deux" + ck[0][ck[0].rfind("."):])
@@ -226,7 +242,9 @@ jobs:
           EOP
           D=ml-engine/src/main/assets/deux
           mkdir -p $D
-          python ml-engine/roformer/export_roformer_bg.py msst deux.yaml "$(cat deux_ckpt_name)" crisp/samples/jfk.wav $D/deux_bg.onnx $D/deux.json
+          rm -rf reuse_repo ~/.cache/huggingface
+          free -h; df -h . || true
+          python -u ml-engine/roformer/export_roformer_bg.py msst deux.yaml "$(cat deux_ckpt_name)" crisp/samples/jfk.wav $D/deux_bg.onnx $D/deux.json
           printf 'becruily/mel-band-roformer-deux — CC BY-NC 4.0 (только некоммерческое использование). https://huggingface.co/becruily/mel-band-roformer-deux\nКод модели: Music-Source-Separation-Training (MIT).\n' > $D/ATTRIBUTION.txt
           rm -f deux.ckpt deux.pth deux.safetensors
           ls -la $D
