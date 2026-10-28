@@ -274,7 +274,7 @@ private fun ProjectEditor(vm: MuteViewModel, s: MuteUi, p: MuteProject) {
     val duration = max(1L, if (p.durationMs > 0) p.durationMs else player.duration.coerceAtLeast(1L))
     var viewStart by remember(p.id) { mutableLongStateOf(0L) }
     var viewLen by remember(p.id) { mutableLongStateOf(30_000L) }
-    val vLen = viewLen.coerceIn(1_000L, duration)
+    val vLen = viewLen.coerceIn(min(1_000L, duration), duration)
     val vStart = viewStart.coerceIn(0L, max(0L, duration - vLen))
     // во время воспроизведения волна едет за курсором
     LaunchedEffect(position, playing) {
@@ -360,7 +360,7 @@ private fun ProjectEditor(vm: MuteViewModel, s: MuteUi, p: MuteProject) {
             }) { Text("−") }
             OutlinedButton(onClick = {
                 val c = position.coerceIn(vStart, vStart + vLen)
-                val nl = (vLen / 2).coerceAtLeast(1_000L)
+                val nl = (vLen / 2).coerceAtLeast(min(1_000L, duration))
                 viewLen = nl; viewStart = (c - nl / 2).coerceIn(0L, max(0L, duration - nl))
             }) { Text("+") }
             Text("на экране ${fmtMs(vLen).substringBeforeLast('.')}", style = MaterialTheme.typography.bodySmall)
