@@ -80,7 +80,8 @@ if isinstance(COMP_RAW, str):
         return torch.log1p(m)
 
     def decompress(a):
-        return torch.expm1(torch.relu(a))
+        # exp − 1 вместо expm1: expm1 нет в ONNX (opset 17); разница для float32 — ниже точности проверки
+        return torch.exp(torch.relu(a)) - 1.0
 else:
     COMP = float(COMP_RAW)
 
